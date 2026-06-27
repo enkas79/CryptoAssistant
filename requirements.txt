@@ -1,0 +1,22 @@
+# Dipendenze per CryptoAssistant
+# Installa con: pip install -r requirements.txt
+
+# Interfaccia grafica (PyQt6)
+PyQt6>=6.4.0
+
+# Gestione dati tabellari
+pandas>=2.0.0
+
+# Chiamate HTTP alle API
+requests>=2.31.0
+
+# Generazione grafici
+matplotlib>=3.7.0
+
+# Generazione PDF
+fpdf>=1.7.2
+
+# (Opzionale) Per sviluppo e test
+pytest>=7.4.0
+black>=23.7.0
+flake8>=6.0.0
