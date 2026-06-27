@@ -9,13 +9,17 @@ import json
 import warnings
 from pathlib import Path
 
+# Add the project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # PyQt6 imports
 from PyQt6.QtWidgets import QApplication
 
-# Local imports
+# Local imports (now absolute)
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from api.coinmarketcap import CoinMarketCapAPI
 from data.database import TransactionDatabase
@@ -23,14 +27,9 @@ from data.importer import CSVImporter
 from gui.main_window import TradingTerminalWindow
 
 
-def get_project_root() -> Path:
-    """Get the project root directory."""
-    return Path(__file__).parent.parent
-
-
 def load_config() -> dict:
     """Load configuration from config/config.json."""
-    config_path = get_project_root() / "config" / "config.json"
+    config_path = project_root / "config" / "config.json"
     if config_path.exists():
         with open(config_path, "r") as f:
             return json.load(f)
@@ -49,7 +48,7 @@ def main():
         sys.exit(1)
     
     # Initialize database
-    db_file = get_project_root() / config.get("data_file", "data/transactions.csv")
+    db_file = project_root / config.get("data_file", "data/transactions.csv")
     database = TransactionDatabase(str(db_file))
     
     # Initialize API clients

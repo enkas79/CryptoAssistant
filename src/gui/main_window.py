@@ -15,25 +15,26 @@ from PyQt6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QGridLayout, QInputDialog, QDateEdit,
     QCheckBox, QStackedWidget, QProgressBar, QApplication
 )
-from PyQt6.QtCore import Qt, QDate, pyqtSignal
+from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from ..data.database import TransactionDatabase
-from ..data.importer import CSVImporter
-from ..data.models import COIN_COLORS, FALLBACK_COLORS
-from ..api.coinmarketcap import CoinMarketCapAPI
-from ..api.frankfurter import HistoricalRatesWorker
-from ..utils.currency import CurrencyConverter
-from ..utils.calculations import (
+# Absolute imports (assuming src/ is in sys.path)
+from data.database import TransactionDatabase
+from data.importer import CSVImporter
+from data.models import COIN_COLORS, FALLBACK_COLORS
+from api.coinmarketcap import CoinMarketCapAPI
+from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
+from utils.currency import CurrencyConverter
+from utils.calculations import (
     calculate_portfolio_allocation,
     calculate_token_stats,
     calculate_target_quantity,
     calculate_performance
 )
-from ..utils.pdf_generator import FiscalReportGenerator
+from utils.pdf_generator import FiscalReportGenerator
 
 
 class TradingTerminalWindow(QWidget):
@@ -578,11 +579,9 @@ class TradingTerminalWindow(QWidget):
         if self.check_usa_filtro.isChecked():
             d_inizio = self.date_inizio.date().toPyDate()
             d_fine = self.date_fine.date().toPyDate()
-            periodo_str = f"{d_inizio.strftime('%d/%m/%Y')} - {d_fine.strftime('%d/%m/%Y')}"
         else:
             d_inizio = None
             d_fine = None
-            periodo_str = "Storico Completo"
         
         # Get output path
         path, _ = QFileDialog.getSaveFileName(
