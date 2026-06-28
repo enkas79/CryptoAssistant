@@ -25,6 +25,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from data.database import TransactionDatabase
 from data.importer import CSVImporter
 from data.models import COIN_COLORS, FALLBACK_COLORS
+from data.tax_rules import TaxRulesManager
 from api.coinmarketcap import CoinMarketCapAPI
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from utils.currency import CurrencyConverter
@@ -35,6 +36,7 @@ from utils.calculations import (
     calculate_performance
 )
 from utils.pdf_generator import FiscalReportGenerator
+from utils.tax_calculator import TaxCalculator
 
 
 class TradingTerminalWindow(QWidget):
@@ -66,6 +68,10 @@ class TradingTerminalWindow(QWidget):
         self.cmc_api = cmc_api
         self.currency_converter = currency_converter
         self.config = config
+        
+        # Initialize tax calculator (default: Italy)
+        self.tax_rules_manager = TaxRulesManager()
+        self.tax_calculator = TaxCalculator(country_code="IT")
         
         # Initialize UI
         self.valuta = config.get("default_currency", "EUR")
@@ -140,6 +146,12 @@ class TradingTerminalWindow(QWidget):
         self.btn_valuta = QPushButton(f"\ud83d\udcb1 Valuta: {self.valuta}")
         self.btn_valuta.clicked.connect(self.toggle_valuta)
 
+        # --- Selettore Nazione per Tasse ---
+        self.combo_nazione = QComboBox()
+        self.combo_nazione.setMinimumWidth(120)
+        self.combo_nazione.addItems(self.tax_rules_manager.list_countries())
+        self.combo_nazione.currentIndexChanged.connect(self.on_nazione_changed)
+
         layout_h.addWidget(QLabel("<b>Asset:</b>"))
         layout_h.addWidget(self.combo_token)
         layout_h.addSpacing(20)
@@ -148,6 +160,9 @@ class TradingTerminalWindow(QWidget):
         layout_h.addWidget(self.date_inizio)
         layout_h.addWidget(QLabel("A:"))
         layout_h.addWidget(self.date_fine)
+        layout_h.addSpacing(20)
+        layout_h.addWidget(QLabel("<b>Nazione:</b>"))
+        layout_h.addWidget(self.combo_nazione)
         layout_h.addStretch()
         layout_h.addWidget(self.btn_valuta)
         layout_h.addWidget(self.btn_aggiungi)
@@ -266,6 +281,33 @@ class TradingTerminalWindow(QWidget):
         self.group_strat.setLayout(layout_st)
         sidebar.addWidget(self.group_strat)
 
+        # 5. Calcolo Tasse (NUOVO)
+        self.group_tasse = QGroupBox("\ud83d\udcb3 CALCOLO TASSE")
+        layout_tasse = QVBoxLayout()
+        
+        self.combo_anno_tasse = QComboBox()
+        self.combo_anno_tasse.setMinimumWidth(100)
+        # Populate with years from 2020 to current year + 1
+        current_year = datetime.now().year
+        for y in range(2020, current_year + 2):
+            self.combo_anno_tasse.addItem(str(y))
+        self.combo_anno_tasse.setCurrentText(str(current_year))
+        
+        btn_calcola_tasse = QPushButton("\ud83d\udc69 Calcola Tasse")
+        btn_calcola_tasse.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; padding: 10px;")
+        btn_calcola_tasse.clicked.connect(self.calcola_tasse)
+        
+        self.label_tasse_risultato = QLabel("Seleziona una nazione e un anno per calcolare le tasse.")
+        self.label_tasse_risultato.setWordWrap(True)
+        self.label_tasse_risultato.setStyleSheet("background-color: #fff3cd; padding: 10px; border: 1px solid #ffc107; border-radius: 5px; color: #856404;")
+        
+        layout_tasse.addWidget(QLabel("Anno:"))
+        layout_tasse.addWidget(self.combo_anno_tasse)
+        layout_tasse.addWidget(btn_calcola_tasse)
+        layout_tasse.addWidget(self.label_tasse_risultato)
+        self.group_tasse.setLayout(layout_tasse)
+        sidebar.addWidget(self.group_tasse)
+
         sidebar.addStretch()
         layout_corpo.addWidget(sidebar_widget)
         layout_principale.addLayout(layout_corpo)
@@ -291,6 +333,50 @@ class TradingTerminalWindow(QWidget):
 
     # --- Methods ---
     
+    def on_nazione_changed(self, index: int):
+        """Update tax calculator when country changes."""
+        country_name = self.combo_nazione.currentText()
+        rule = self.tax_rules_manager.get_country_by_name(country_name)
+        if rule:
+            self.tax_calculator = TaxCalculator(country_code=rule.country_code)
+            self.label_tasse_risultato.setText(f"Calcolo tasse per {country_name} - Seleziona un anno.")
+
+    def calcola_tasse(self):
+        """Calculate taxes for the selected country and year."""
+        if self.df_master is None or self.df_master.empty:
+            QMessageBox.warning(self, "Tasse", "Nessun dato disponibile per il calcolo delle tasse.")
+            return
+        
+        country_name = self.combo_nazione.currentText()
+        year = int(self.combo_anno_tasse.currentText())
+        
+        try:
+            # Calculate taxes
+            tax_summary = self.tax_calculator.get_tax_summary(self.df_master, year)
+            
+            # Format the result
+            result_text = f"""
+            <b>Calcolo Tasse per {tax_summary['country']} ({tax_summary['year']})</b><br><br>
+            <b>Plusvalenze:</b> €{tax_summary['capital_gain']:,.2f}<br>
+            <b>Imposta su Plusvalenze ({tax_summary['rule']['capital_gain_rate']}):</b> €{tax_summary['capital_gain_tax']:,.2f}<br>
+            <b>Imposta di Bollo:</b> €{tax_summary['stamp_duty']:,.2f}<br>
+            <b>Totale Tasse:</b> <span style='color: #dc3545; font-weight: bold;'>€{tax_summary['total_tax']:,.2f}</span><br><br>
+            """
+            
+            if tax_summary['declaration_required']:
+                result_text += "⚠️ <b>Dichiarazione RW obbligatoria</b> (portafoglio > €{:,.2f}).<br>".format(
+                    tax_summary['rule']['declaration_threshold']
+                )
+            
+            if tax_summary['notes']:
+                result_text += "<br><b>Note:</b><br>" + "<br>".join(tax_summary['notes'])
+            
+            self.label_tasse_risultato.setText(result_text)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Errore nel calcolo delle tasse: {e}")
+            self.label_tasse_risultato.setText("Errore nel calcolo delle tasse.")
+
     def importa_files(self):
         """Import CSV files with transactions."""
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleziona CSV", "", "CSV Files (*.csv)")
