@@ -25,7 +25,7 @@ def calculate_portfolio_allocation(
     Returns:
         Tuple[list, list, list]: (values, labels, colors) for pie chart.
     """
-    from ..data.models import COIN_COLORS, FALLBACK_COLORS
+    from src.data.models import COIN_COLORS, FALLBACK_COLORS
     
     values = []
     labels = []

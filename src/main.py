@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QInputDialog
 from PyQt6.QtCore import Qt
 
 # Local imports (now absolute)
-from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
-from api.coinmarketcap import CoinMarketCapAPI
-from data.database import TransactionDatabase
-from data.importer import CSVImporter
-from gui.main_window import TradingTerminalWindow
+from src.api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
+from src.api.coinmarketcap import CoinMarketCapAPI
+from src.data.database import TransactionDatabase
+from src.data.importer import CSVImporter
+from src.gui.main_window import TradingTerminalWindow
 
 
 def get_project_root() -> Path:

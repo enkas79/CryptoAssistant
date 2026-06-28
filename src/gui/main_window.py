@@ -22,21 +22,21 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 # Absolute imports (assuming src/ is in sys.path)
-from data.database import TransactionDatabase
-from data.importer import CSVImporter
-from data.models import COIN_COLORS, FALLBACK_COLORS
-from data.tax_rules import TaxRulesManager
-from api.coinmarketcap import CoinMarketCapAPI
-from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
-from utils.currency import CurrencyConverter
-from utils.calculations import (
+from src.data.database import TransactionDatabase
+from src.data.importer import CSVImporter
+from src.data.models import COIN_COLORS, FALLBACK_COLORS
+from src.data.tax_rules import TaxRulesManager
+from src.api.coinmarketcap import CoinMarketCapAPI
+from src.api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
+from src.utils.currency import CurrencyConverter
+from src.utils.calculations import (
     calculate_portfolio_allocation,
     calculate_token_stats,
     calculate_target_quantity,
     calculate_performance
 )
-from utils.pdf_generator import FiscalReportGenerator
-from utils.tax_calculator import TaxCalculator
+from src.utils.pdf_generator import FiscalReportGenerator
+from src.utils.tax_calculator import TaxCalculator
 
 
 class TradingTerminalWindow(QWidget):
