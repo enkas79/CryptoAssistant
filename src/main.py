@@ -48,10 +48,10 @@ def save_config(config: dict) -> None:
         json.dump(config, f, indent=4)
 
 
-def get_api_key_from_user() -> Optional[str]:
+def get_api_key_from_user() -> str:
     """
     Show a dialog to input the CoinMarketCap API Key.
-    Returns the API Key if provided, None otherwise.
+    Returns the API Key if provided, empty string otherwise.
     """
     app = QApplication.instance()
     if app is None:
@@ -62,18 +62,21 @@ def get_api_key_from_user() -> Optional[str]:
         None,
         "Configurazione API",
         "Inserisci la tua API Key di CoinMarketCap:\n\n"
-        "(Puoi ottenerla gratuitamente da: https://coinmarketcap.com/api/)",
-        QInputDialog.Normal,
-        ""
+        "(Puoi ottenerla gratuitamente da: https://coinmarketcap.com/api/)"
     )
     
     if ok and key:
         return key.strip()
-    return None
+    return ""
 
 
 def main():
     """Main entry point for the application."""
+    # Create QApplication first to ensure GUI is available
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    
     # Load configuration
     config = load_config()
     api_key = config.get("api_key")
@@ -87,11 +90,6 @@ def main():
         else:
             # User cancelled, exit gracefully
             sys.exit(0)
-    
-    # Create QApplication if not already created
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
     
     # Initialize database
     db_file = get_project_root() / config.get("data_file", "data/transactions.csv")
