@@ -9,15 +9,12 @@ import json
 import warnings
 from pathlib import Path
 
-# Add the project root to Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # PyQt6 imports
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox, QInputDialog
+from PyQt6.QtCore import Qt
 
 # Local imports (now absolute)
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
@@ -27,13 +24,52 @@ from data.importer import CSVImporter
 from gui.main_window import TradingTerminalWindow
 
 
+def get_project_root() -> Path:
+    """Get the project root directory."""
+    return Path(__file__).parent.parent
+
+
 def load_config() -> dict:
     """Load configuration from config/config.json."""
-    config_path = project_root / "config" / "config.json"
+    config_path = get_project_root() / "config" / "config.json"
     if config_path.exists():
         with open(config_path, "r") as f:
             return json.load(f)
     return {"api_key": None, "default_currency": "EUR"}
+
+
+def save_config(config: dict) -> None:
+    """Save configuration to config/config.json."""
+    config_path = get_project_root() / "config" / "config.json"
+    config_dir = config_path.parent
+    if not config_dir.exists():
+        config_dir.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=4)
+
+
+def get_api_key_from_user() -> Optional[str]:
+    """
+    Show a dialog to input the CoinMarketCap API Key.
+    Returns the API Key if provided, None otherwise.
+    """
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    
+    # Show input dialog
+    key, ok = QInputDialog.getText(
+        None,
+        "Configurazione API",
+        "Inserisci la tua API Key di CoinMarketCap:\n\n"
+        "(Puoi ottenerla gratuitamente da: https://coinmarketcap.com/api/)",
+        QInputDialog.Normal,
+        ""
+    )
+    
+    if ok and key:
+        return key.strip()
+    return None
 
 
 def main():
@@ -42,13 +78,23 @@ def main():
     config = load_config()
     api_key = config.get("api_key")
     
+    # If API Key is missing or placeholder, ask the user
     if not api_key or api_key == "INSERISCI_LA_TUA_API_KEY_COINMARKETCAP":
-        print("Errore: API Key CoinMarketCap non configurata.")
-        print("Aggiungi la tua API Key in config/config.json")
-        sys.exit(1)
+        api_key = get_api_key_from_user()
+        if api_key:
+            config["api_key"] = api_key
+            save_config(config)
+        else:
+            # User cancelled, exit gracefully
+            sys.exit(0)
+    
+    # Create QApplication if not already created
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
     
     # Initialize database
-    db_file = project_root / config.get("data_file", "data/transactions.csv")
+    db_file = get_project_root() / config.get("data_file", "data/transactions.csv")
     database = TransactionDatabase(str(db_file))
     
     # Initialize API clients
@@ -65,9 +111,6 @@ def main():
         currency_converter.set_live_rate(live_rate)
     
     # Create and run the application
-    app = QApplication(sys.argv)
-    
-    # Initialize the main window with all dependencies
     window = TradingTerminalWindow(
         database=database,
         cmc_api=cmc_api,
