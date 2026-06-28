@@ -65,7 +65,7 @@ class TaxRulesManager:
         "FR": TaxRule(
             country="Francia",
             country_code="FR",
-            capital_gain_rate=0.30,  # 30% flat tax (PFU)
+            capital_gain_rate=0.30,  # 30% flat tax (PFU - Prélèvement Forfaitaire Unique)
             capital_gain_threshold=0.0,  # No threshold
             stamp_duty=0.0,
             stamp_duty_threshold=0.0,
@@ -73,12 +73,12 @@ class TaxRulesManager:
             holding_period_exemption=1,  # 1 year for long-term exemption
             tax_free_allowance=0.0,
             fifo_required=True,
-            notes="Flat tax del 30% (PFU). Esenzione dopo 1 anno di detenzione."
+            notes="Flat tax del 30% (PFU). Esenzione dopo 1 anno di detenzione per cessioni < €308."
         ),
         "DE": TaxRule(
             country="Germania",
             country_code="DE",
-            capital_gain_rate=0.25,  # 25% + solidarity surcharge
+            capital_gain_rate=0.25,  # 25% + solidarity surcharge (5.5%)
             capital_gain_threshold=1000.0,  # EUR 1.000 annual allowance
             stamp_duty=0.0,
             stamp_duty_threshold=0.0,
@@ -86,20 +86,111 @@ class TaxRulesManager:
             holding_period_exemption=1,  # 1 year for exemption
             tax_free_allowance=1000.0,  # EUR 1.000 annual allowance
             fifo_required=True,
-            notes="Aliquota del 25% + 5,5% di solidarietà. Esenzione dopo 1 anno se < €1.000."
+            notes="Aliquota del 25% + 5,5% di solidarietà. Esenzione dopo 1 anno se < €1.000 annuali."
         ),
         "ES": TaxRule(
             country="Spagna",
             country_code="ES",
-            capital_gain_rate=0.23,  # 19%-23% progressive
+            capital_gain_rate=0.23,  # 19%-23% progressive (2024 rates)
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=0,  # No holding period exemption
+            tax_free_allowance=0.0,
+            fifo_required=True,
+            notes="Aliquota progressiva: 19% (€0-€6.000), 21% (€6.001-€50.000), 23% (>€50.000)."
+        ),
+        "NL": TaxRule(
+            country="Paesi Bassi",
+            country_code="NL",
+            capital_gain_rate=0.31,  # 31% capital gains tax
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=0,  # No holding period exemption
+            tax_free_allowance=50000.0,  # EUR 50.000 tax-free allowance for crypto
+            fifo_required=True,
+            notes="Aliquota del 31% sulle plusvalenze. Esenzione annuale di €50.000 per crypto (2024)."
+        ),
+        "BE": TaxRule(
+            country="Belgio",
+            country_code="BE",
+            capital_gain_rate=0.33,  # 33% capital gains tax
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=0,  # No holding period exemption
+            tax_free_allowance=0.0,
+            fifo_required=True,
+            notes="Aliquota del 33% sulle plusvalenze. Tassazione solo se vendita > €50.000 annuali."
+        ),
+        "PT": TaxRule(
+            country="Portogallo",
+            country_code="PT",
+            capital_gain_rate=0.28,  # 28% capital gains tax
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=1,  # 1 year for exemption
+            tax_free_allowance=0.0,
+            fifo_required=True,
+            notes="Aliquota del 28% sulle plusvalenze. Esenzione dopo 1 anno di detenzione."
+        ),
+        "AT": TaxRule(
+            country="Austria",
+            country_code="AT",
+            capital_gain_rate=0.275,  # 27.5% capital gains tax
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=1,  # 1 year for exemption
+            tax_free_allowance=0.0,
+            fifo_required=True,
+            notes="Aliquota del 27,5% sulle plusvalenze. Esenzione dopo 1 anno di detenzione."
+        ),
+        "CH": TaxRule(
+            country="Svizzera",
+            country_code="CH",
+            capital_gain_rate=0.0,  # No capital gains tax for private individuals
             capital_gain_threshold=0.0,
             stamp_duty=0.0,
             stamp_duty_threshold=0.0,
             declaration_threshold=0.0,
             holding_period_exemption=0,
             tax_free_allowance=0.0,
+            fifo_required=False,
+            notes="Nessuna tassa sulle plusvalenze per persone fisiche (tassazione solo per attività professionale)."
+        ),
+        "US": TaxRule(
+            country="Stati Uniti",
+            country_code="US",
+            capital_gain_rate=0.20,  # 20% long-term capital gains (federal)
+            capital_gain_threshold=0.0,
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=1,  # 1 year for long-term rate
+            tax_free_allowance=0.0,
             fifo_required=True,
-            notes="Aliquota progressiva dal 19% al 23%."
+            notes="Aliquota federale: 0%-20% a seconda del reddito. Tassazione statale aggiuntiva possibile."
+        ),
+        "GB": TaxRule(
+            country="Regno Unito",
+            country_code="GB",
+            capital_gain_rate=0.20,  # 20% capital gains tax (basic rate)
+            capital_gain_threshold=3000.0,  # £3,000 annual exemption (2024-25)
+            stamp_duty=0.0,
+            stamp_duty_threshold=0.0,
+            declaration_threshold=0.0,
+            holding_period_exemption=0,
+            tax_free_allowance=3000.0,  # £3,000 annual exemption
+            fifo_required=True,
+            notes="Aliquota: 10% (basic rate) o 20% (higher rate). Esenzione annuale di £3.000."
         ),
     }
     
@@ -133,6 +224,15 @@ class TaxRulesManager:
             if rule.country.lower() == country_name.lower():
                 return rule
         return None
+    
+    def get_all_rules(self) -> Dict[str, TaxRule]:
+        """
+        Get all available tax rules.
+        
+        Returns:
+            Dict[str, TaxRule]: Dictionary of all tax rules, keyed by country code.
+        """
+        return self.rules.copy()
     
     def list_countries(self) -> List[str]:
         """

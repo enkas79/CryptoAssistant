@@ -9,8 +9,18 @@ import json
 import warnings
 from pathlib import Path
 
+# Add src directory to Python path
+project_root = Path(__file__).parent.parent
+src_path = project_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
 # Suppress warnings
 warnings.filterwarnings("ignore")
+
+# Initialize logging first
+from utils.logger import setup_logging
+logger = setup_logging(log_level="INFO")
 
 # PyQt6 imports
 from PyQt6.QtWidgets import QApplication, QMessageBox, QInputDialog
@@ -72,43 +82,57 @@ def get_api_key_from_user() -> str:
 
 def main():
     """Main entry point for the application."""
+    logger.info("Starting CryptoAssistant application...")
+    
     # Create QApplication first to ensure GUI is available
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
     
+    logger.info("QApplication initialized")
+    
     # Load configuration
     config = load_config()
+    logger.info(f"Configuration loaded: {config.get('default_currency', 'EUR')} currency")
+    
     api_key = config.get("api_key")
     
     # If API Key is missing or placeholder, ask the user
     if not api_key or api_key == "INSERISCI_LA_TUA_API_KEY_COINMARKETCAP":
+        logger.warning("API Key not found or is placeholder, requesting from user...")
         api_key = get_api_key_from_user()
         if api_key:
             config["api_key"] = api_key
             save_config(config)
+            logger.info("API Key saved to configuration")
         else:
-            # User cancelled, exit gracefully
+            logger.warning("User cancelled API Key input, exiting...")
             sys.exit(0)
     
     # Initialize database
     db_file = get_project_root() / config.get("data_file", "data/transactions.csv")
+    logger.info(f"Initializing database from: {db_file}")
     database = TransactionDatabase(str(db_file))
     
     # Initialize API clients
+    logger.info("Initializing CoinMarketCap API client...")
     cmc_api = CoinMarketCapAPI(api_key)
     
     # Initialize currency converter
     currency = config.get("default_currency", "EUR")
+    logger.info(f"Initializing currency converter with currency: {currency}")
     from utils.currency import CurrencyConverter
     currency_converter = CurrencyConverter(default_currency=currency)
     
     # Set live exchange rate
     if currency == "EUR":
+        logger.info("Fetching live exchange rate (USD to EUR)...")
         live_rate = get_live_exchange_rate(base="USD", target="EUR")
         currency_converter.set_live_rate(live_rate)
+        logger.info(f"Live exchange rate set: {live_rate}")
     
     # Create and run the application
+    logger.info("Creating main window...")
     window = TradingTerminalWindow(
         database=database,
         cmc_api=cmc_api,
@@ -116,7 +140,10 @@ def main():
         config=config
     )
     
+    logger.info("Showing main window...")
     window.showMaximized()
+    logger.info("Application started successfully")
+    
     sys.exit(app.exec())
 
 

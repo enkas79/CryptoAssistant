@@ -7,9 +7,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import pandas as pd
+import logging
 
-from ..data.models import Transaction
-from ..data.tax_rules import TaxRule, TaxCalculationResult, TaxRulesManager
+from data.models import Transaction
+from data.tax_rules import TaxRule, TaxCalculationResult, TaxRulesManager
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,11 +43,15 @@ class TaxCalculator:
         Args:
             country_code (str): ISO 3166-1 alpha-2 country code (e.g., "IT" for Italy).
         """
+        logger.debug(f"Initializing TaxCalculator for country: {country_code}")
         self.rules_manager = TaxRulesManager()
         self.rule: TaxRule = self.rules_manager.get_rule(country_code)
         
         if self.rule is None:
+            logger.error(f"No tax rules found for country code: {country_code}")
             raise ValueError(f"No tax rules found for country code: {country_code}")
+        
+        logger.info(f"TaxCalculator initialized with rules for {self.rule.country}")
     
     def set_country(self, country_code: str) -> None:
         """
@@ -52,9 +60,12 @@ class TaxCalculator:
         Args:
             country_code (str): ISO 3166-1 alpha-2 country code.
         """
+        logger.debug(f"Changing country to: {country_code}")
         self.rule = self.rules_manager.get_rule(country_code)
         if self.rule is None:
+            logger.error(f"No tax rules found for country code: {country_code}")
             raise ValueError(f"No tax rules found for country code: {country_code}")
+        logger.info(f"Country changed to {self.rule.country}")
     
     def calculate_taxes(
         self,
@@ -75,12 +86,16 @@ class TaxCalculator:
         if year is None:
             year = datetime.now().year
         
+        logger.info(f"Calculating taxes for year: {year}")
+        logger.debug(f"Input DataFrame shape: {df.shape}")
+        
         # Filter transactions for the year
         df = df.copy()
         df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
         df = df[df['Date (UTC+1:00)'].dt.year == year]
         
         if df.empty:
+            logger.warning(f"No transactions found for year {year}")
             return TaxCalculationResult(
                 country=self.rule.country,
                 year=year,
@@ -93,29 +108,38 @@ class TaxCalculator:
                 notes=["Nessuna transazione per l'anno selezionato."]
             )
         
+        logger.debug(f"Filtered DataFrame shape for year {year}: {df.shape}")
+        
         # Apply FIFO to match buys and sells
+        logger.debug("Applying FIFO method to match buy and sell transactions...")
         taxable_events: List[TaxableEvent] = self._apply_fifo(df)
         
         # Calculate capital gains
         capital_gain = sum(event.gain for event in taxable_events if event.gain > 0)
+        logger.info(f"Total capital gain for {year}: €{capital_gain:,.2f}")
         
         # Calculate capital gain tax
         if capital_gain > self.rule.capital_gain_threshold:
             capital_gain_tax = capital_gain * self.rule.capital_gain_rate
+            logger.info(f"Capital gain tax (rate: {self.rule.capital_gain_rate*100}%): €{capital_gain_tax:,.2f}")
         else:
             capital_gain_tax = 0.0
+            logger.info(f"Capital gain below threshold (€{self.rule.capital_gain_threshold:,.2f}), no tax")
         
         # Calculate stamp duty (for Italy: EUR 2 per transaction over EUR 5.000)
         stamp_duty = 0.0
         if self.rule.stamp_duty > 0:
-            for _, row in df[df['Type'] == 'sell'].iterrows():
+            sell_transactions = df[df['Type'] == 'sell']
+            for _, row in sell_transactions.iterrows():
                 transaction_value = row['Amount'] * row['Price']
                 if transaction_value > self.rule.stamp_duty_threshold:
                     stamp_duty += self.rule.stamp_duty
+            logger.info(f"Stamp duty (€{self.rule.stamp_duty} per transaction > €{self.rule.stamp_duty_threshold:,.2f}): €{stamp_duty:,.2f}")
         
         # Check if declaration is required (for Italy: portfolio > EUR 15.000)
         portfolio_value = self._calculate_portfolio_value(df, year)
         declaration_required = portfolio_value > self.rule.declaration_threshold
+        logger.info(f"Portfolio value: €{portfolio_value:,.2f}, Declaration required: {declaration_required}")
         
         # Prepare notes
         notes = []
@@ -125,6 +149,7 @@ class TaxCalculator:
                 notes.append(
                     f"{len(exempt_events)} transazioni esenti per detenzione > {self.rule.holding_period_exemption} anni."
                 )
+                logger.info(f"{len(exempt_events)} transactions exempt for holding period > {self.rule.holding_period_exemption} years")
         
         if capital_gain <= self.rule.capital_gain_threshold:
             notes.append(
@@ -136,7 +161,7 @@ class TaxCalculator:
                 f"Dichiarazione RW obbligatoria (portafoglio > €{self.rule.declaration_threshold:,.2f})."
             )
         
-        return TaxCalculationResult(
+        result = TaxCalculationResult(
             country=self.rule.country,
             year=year,
             capital_gain=capital_gain,
@@ -158,6 +183,9 @@ class TaxCalculator:
             declaration_required=declaration_required,
             notes=notes
         )
+        
+        logger.info(f"Tax calculation completed for {year}: Total tax = €{result.total_tax:,.2f}")
+        return result
     
     def _apply_fifo(self, df: pd.DataFrame) -> List[TaxableEvent]:
         """
@@ -223,6 +251,7 @@ class TaxCalculator:
                     buy['Amount'] -= match_amount
                     remaining_amount -= match_amount
         
+        logger.debug(f"FIFO matching completed: {len(taxable_events)} taxable events generated")
         return taxable_events
     
     def _calculate_portfolio_value(self, df: pd.DataFrame, year: int) -> float:
@@ -259,6 +288,7 @@ class TaxCalculator:
                 last_price = token_df[token_df['Date (UTC+1:00)'].dt.year == year]['Price'].iloc[-1] if not token_df.empty else 0
                 portfolio_value += net_amount * last_price
         
+        logger.debug(f"Calculated portfolio value for year {year}: €{portfolio_value:,.2f}")
         return portfolio_value
     
     def get_tax_summary(self, df: pd.DataFrame, year: Optional[int] = None) -> Dict:
@@ -272,9 +302,10 @@ class TaxCalculator:
         Returns:
             Dict: Summary of tax calculations.
         """
+        logger.debug(f"Generating tax summary for year: {year}")
         result = self.calculate_taxes(df, year)
         
-        return {
+        summary = {
             "country": result.country,
             "year": result.year,
             "capital_gain": round(result.capital_gain, 2),
@@ -291,3 +322,6 @@ class TaxCalculator:
                 "declaration_threshold": f"€{self.rule.declaration_threshold:,.2f}",
             }
         }
+        
+        logger.debug(f"Tax summary generated: {summary}")
+        return summary
