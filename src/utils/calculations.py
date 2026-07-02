@@ -27,7 +27,7 @@ def calculate_portfolio_allocation(
             invested contains the total cost basis (invested amount) for each token,
             in the same order as values/labels/colors.
     """
-    from ..data.models import COIN_COLORS, FALLBACK_COLORS
+    from data.models import COIN_COLORS, FALLBACK_COLORS
 
     values = []
     labels = []

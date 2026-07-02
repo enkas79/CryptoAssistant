@@ -8,8 +8,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import pandas as pd
 
-from ..data.models import Transaction
-from ..data.tax_rules import TaxRule, TaxCalculationResult, TaxRulesManager
+from data.models import Transaction
+from data.tax_rules import TaxRule, TaxCalculationResult, TaxRulesManager
 
 
 @dataclass
