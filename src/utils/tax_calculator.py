@@ -32,29 +32,88 @@ class TaxCalculator:
     Calculates taxes for cryptocurrency transactions.
     """
     
-    def __init__(self, country_code: str = "IT"):
+    def __init__(
+        self,
+        country_code: str = "IT",
+        historical_rates: Optional[Dict[str, float]] = None,
+        live_rate: float = 0.92
+    ):
         """
         Initialize the tax calculator for a specific country.
-        
+
         Args:
             country_code (str): ISO 3166-1 alpha-2 country code (e.g., "IT" for Italy).
+            historical_rates (Optional[Dict[str, float]]): USD->EUR rates keyed by
+                "YYYY-MM-DD", used to normalize transactions recorded in USD to EUR
+                (all supported tax rules are EUR-denominated).
+            live_rate (float): Fallback USD->EUR rate used when a transaction date
+                is not found in historical_rates.
         """
         self.rules_manager = TaxRulesManager()
         self.rule: TaxRule = self.rules_manager.get_rule(country_code)
-        
+
         if self.rule is None:
             raise ValueError(f"No tax rules found for country code: {country_code}")
-    
+
+        self.historical_rates: Dict[str, float] = historical_rates or {}
+        self.live_rate: float = live_rate
+
     def set_country(self, country_code: str) -> None:
         """
         Change the country for tax calculation.
-        
+
         Args:
             country_code (str): ISO 3166-1 alpha-2 country code.
         """
         self.rule = self.rules_manager.get_rule(country_code)
         if self.rule is None:
             raise ValueError(f"No tax rules found for country code: {country_code}")
+
+    def set_historical_rates(self, historical_rates: Dict[str, float]) -> None:
+        """
+        Update the USD->EUR historical rates used to normalize transactions.
+
+        Args:
+            historical_rates (Dict[str, float]): USD->EUR rates keyed by "YYYY-MM-DD".
+        """
+        self.historical_rates = historical_rates
+
+    def _rate_for_date(self, date_obj) -> float:
+        """Get the USD->EUR rate for a given date, falling back to live_rate."""
+        try:
+            date_str = date_obj.strftime("%Y-%m-%d")
+            if date_str in self.historical_rates:
+                return self.historical_rates[date_str]
+        except Exception:
+            pass
+        return self.live_rate
+
+    def _normalize_to_eur(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Convert Price and Fee to EUR for transactions recorded in USD.
+
+        All supported tax rules (capital gain thresholds, stamp duty,
+        declaration threshold) are EUR-denominated, so mixed-currency
+        portfolios must be normalized before any tax computation.
+
+        Args:
+            df (pd.DataFrame): DataFrame with transactions (already filtered by year).
+
+        Returns:
+            pd.DataFrame: DataFrame with Price/Fee normalized to EUR.
+        """
+        if 'Original Currency' not in df.columns:
+            return df
+
+        df = df.copy()
+        is_usd = df['Original Currency'].astype(str) == 'USD'
+        if not is_usd.any():
+            return df
+
+        rates = df.loc[is_usd, 'Date (UTC+1:00)'].apply(self._rate_for_date)
+        df.loc[is_usd, 'Price'] = df.loc[is_usd, 'Price'] * rates
+        df.loc[is_usd, 'Fee'] = df.loc[is_usd, 'Fee'] * rates
+        return df
     
     def calculate_taxes(
         self,
@@ -79,7 +138,10 @@ class TaxCalculator:
         df = df.copy()
         df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
         df = df[df['Date (UTC+1:00)'].dt.year == year]
-        
+
+        # Normalize USD transactions to EUR (tax rules are EUR-denominated)
+        df = self._normalize_to_eur(df)
+
         if df.empty:
             return TaxCalculationResult(
                 country=self.rule.country,

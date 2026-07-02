@@ -12,62 +12,66 @@ def calculate_portfolio_allocation(
     live_prices: Dict[str, float],
     exchange_rate: float,
     currency: str = "EUR"
-) -> Tuple[list, list, list]:
+) -> Tuple[list, list, list, list]:
     """
     Calculate portfolio allocation for pie chart visualization.
-    
+
     Args:
         df (pd.DataFrame): DataFrame with transactions.
         live_prices (Dict[str, float]): Current prices for each token.
         exchange_rate (float): Exchange rate (USD to EUR if currency is EUR).
         currency (str): Target currency (EUR or USD).
-    
+
     Returns:
-        Tuple[list, list, list]: (values, labels, colors) for pie chart.
+        Tuple[list, list, list, list]: (values, labels, colors, invested) for pie chart.
+            invested contains the total cost basis (invested amount) for each token,
+            in the same order as values/labels/colors.
     """
     from ..data.models import COIN_COLORS, FALLBACK_COLORS
-    
+
     values = []
     labels = []
     colors = []
+    invested = []
     fallback_idx = 0
-    
+
     mult = exchange_rate if currency == "EUR" else 1.0
-    
+
     for token in df['Token'].unique():
         sub = df[df['Token'] == token]
         buys = sub[sub['Type'] == 'buy']
         sells = sub[sub['Type'] == 'sell']
-        
+
         quantity = buys['Amount'].sum() - sells['Amount'].sum()
         if quantity <= 0.000001:
             continue
-        
+
         # Calculate total invested (with currency conversion)
         total_invested = 0.0
         for _, row in buys.iterrows():
             price = row['Price']
             orig_curr = str(row.get('Original Currency', 'EUR'))
-            
+
             if currency == "EUR" and orig_curr == "USD":
                 # Convert from USD to EUR using historical rate (simplified here)
                 # In the full app, this would use the historical rate for the transaction date
                 total_invested += (row['Amount'] * price * exchange_rate) + (row['Fee'] * exchange_rate)
             else:
                 total_invested += (row['Amount'] * price) + row['Fee']
-        
+
         current_value = quantity * live_prices.get(token, 0) * mult
-        
+
         if current_value > 0:
             values.append(current_value)
             labels.append(token)
+            invested.append(total_invested)
             if token.upper() in COIN_COLORS:
                 colors.append(COIN_COLORS[token.upper()])
             else:
                 colors.append(FALLBACK_COLORS[fallback_idx % len(FALLBACK_COLORS)])
                 fallback_idx += 1
-    
-    return values, labels, colors
+
+    return values, labels, colors, invested
 
 
 def calculate_token_stats(
