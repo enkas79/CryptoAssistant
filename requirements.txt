@@ -14,7 +14,7 @@ requests>=2.31.0
 matplotlib>=3.7.0
 
 # Generazione PDF
-fpdf>=1.7.2
+fpdf2>=2.7.0
 
 # (Opzionale) Per sviluppo e test
 pytest>=7.4.0

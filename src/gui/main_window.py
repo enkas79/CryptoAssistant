@@ -69,17 +69,17 @@ class TradingTerminalWindow(QWidget):
         self.currency_converter = currency_converter
         self.config = config
         
-        # Initialize tax calculator (default: Italy)
-        self.tax_rules_manager = TaxRulesManager()
-        self.tax_calculator = TaxCalculator(country_code="IT")
-        
-        # Initialize UI
+        # Initialize UI state
         self.valuta = config.get("default_currency", "EUR")
         self.tasso_cambio_live = currency_converter.live_rate
         self.tassi_storici = {}
         self.prezzi_live = {}
         self.dati_correnti = {'pmc': 0, 'qta': 0, 'costo_tot': 0, 'investito': 0}
-        
+
+        # Initialize tax calculator (default: Italy)
+        self.tax_rules_manager = TaxRulesManager()
+        self.tax_calculator = TaxCalculator(country_code="IT", historical_rates=self.tassi_storici)
+
         # Initialize UI
         self.initUI()
         
@@ -338,7 +338,10 @@ class TradingTerminalWindow(QWidget):
         country_name = self.combo_nazione.currentText()
         rule = self.tax_rules_manager.get_country_by_name(country_name)
         if rule:
-            self.tax_calculator = TaxCalculator(country_code=rule.country_code)
+            self.tax_calculator = TaxCalculator(
+                country_code=rule.country_code,
+                historical_rates=self.tassi_storici
+            )
             self.label_tasse_risultato.setText(f"Calcolo tasse per {country_name} - Seleziona un anno.")
 
     def calcola_tasse(self):
@@ -447,6 +450,7 @@ class TradingTerminalWindow(QWidget):
         """Save historical exchange rates."""
         self.tassi_storici = rates
         self.currency_converter.set_historical_rates(rates)
+        self.tax_calculator.set_historical_rates(rates)
         self.progress_bar.setVisible(False)
         self.aggiorna_vista()
 
@@ -484,14 +488,11 @@ class TradingTerminalWindow(QWidget):
             self.label_live_price.setText("Globale")
 
             # Calculate portfolio allocation
-            values, labels, colors = calculate_portfolio_allocation(
+            values, labels, colors, invested = calculate_portfolio_allocation(
                 df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta
             )
 
-            tot_investito = sum(
-                (df_filtrato[df_filtrato['Token'] == t]['Amount'].sum() * self.prezzi_live.get(t, 0) * mult_live)
-                for t in df_filtrato['Token'].unique()
-            )
+            tot_investito = sum(invested)
             tot_valore = sum(values)
 
             self.label_total_netto.setText(f"{tot_valore:,.2f} {simb}")

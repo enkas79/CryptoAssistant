@@ -5,7 +5,7 @@ Handles generating fiscal reports in PDF format.
 
 import os
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 import pandas as pd
 from fpdf import FPDF
 
