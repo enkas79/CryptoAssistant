@@ -112,13 +112,13 @@ class TransactionDatabase:
         Returns:
             int: Number of rows added.
         """
-        if self.df is None:
-            self.df = new_df
-            return len(new_df)
-        
-        # Clean the new DataFrame
+        # Clean the new DataFrame (parses dates, normalizes numeric columns, etc.)
         new_df = self._clean_dataframe(new_df)
-        
+
+        if self.df is None:
+            self.df = new_df.sort_values(by='Date (UTC+1:00)', ascending=False)
+            return len(new_df)
+
         # Combine and remove duplicates
         combined = pd.concat([self.df, new_df]).drop_duplicates(
             subset=['Date (UTC+1:00)', 'Token', 'Type', 'Amount', 'Notes'],
