@@ -26,7 +26,7 @@ from data.database import TransactionDatabase
 from data.importer import CSVImporter
 from data.models import COIN_COLORS, FALLBACK_COLORS
 from data.tax_rules import TaxRulesManager
-from api.coinmarketcap import CoinMarketCapAPI
+from api.coinmarketcap import CoinMarketCapAPI, LivePricesWorker
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from utils.currency import CurrencyConverter
 from utils.calculations import (
@@ -410,24 +410,29 @@ class TradingTerminalWindow(QWidget):
         self.get_all_live_prices()
 
     def get_all_live_prices(self):
-        """Fetch live prices for all tokens."""
+        """Fetch live prices for all tokens in a background thread (does not block the UI)."""
         if self.df_master is None or self.df_master.empty:
             return
-        
+
+        if hasattr(self, 'prices_worker') and self.prices_worker.isRunning():
+            return
+
         tokens = self.df_master['Token'].unique().tolist()
-        
-        try:
-            # Get live prices from CoinMarketCap
-            self.prezzi_live = self.cmc_api.get_live_prices(tokens, convert="USD")
-            
-            # Update live exchange rate
-            if self.valuta == "EUR":
-                self.tasso_cambio_live = self.currency_converter.live_rate
-                self.currency_converter.set_live_rate(self.tasso_cambio_live)
-            
-            self.aggiorna_vista()
-        except Exception as e:
-            print(f"Errore API CMC: {e}")
+
+        self.prices_worker = LivePricesWorker(self.cmc_api, tokens, convert="USD")
+        self.prices_worker.finished.connect(self._su_prezzi_live_ricevuti)
+        self.prices_worker.start()
+
+    def _su_prezzi_live_ricevuti(self, prices):
+        """Handle live prices received from the background worker."""
+        self.prezzi_live = prices
+
+        # Update live exchange rate
+        if self.valuta == "EUR":
+            self.tasso_cambio_live = self.currency_converter.live_rate
+            self.currency_converter.set_live_rate(self.tasso_cambio_live)
+
+        self.aggiorna_vista()
 
     def avvia_download_storico(self):
         """Start downloading historical exchange rates."""
