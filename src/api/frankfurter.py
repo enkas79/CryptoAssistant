@@ -38,7 +38,7 @@ class HistoricalRatesWorker(QThread):
             start_str = self.start_date.strftime("%Y-%m-%d")
             end_str = self.end_date.strftime("%Y-%m-%d")
             url = f"https://api.frankfurter.app/{start_str}..{end_str}?from={self.base}&to={self.target}"
-            res = requests.get(url).json()
+            res = requests.get(url, timeout=15).json()
             if 'rates' in res:
                 for date_str, rate_dict in res['rates'].items():
                     rates[date_str] = rate_dict.get(self.target, 1.0)
@@ -60,7 +60,7 @@ def get_live_exchange_rate(base="USD", target="EUR"):
     """
     try:
         url = f"https://api.frankfurter.app/latest?from={base}&to={target}"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=10).json()
         return res['rates'][target]
     except Exception as e:
         print(f"Errore download tasso live: {e}")
