@@ -157,6 +157,52 @@ def calculate_target_quantity(
         return 0, 0
 
 
+def calculate_invested_over_time(
+    df: pd.DataFrame,
+    exchange_rate: float,
+    currency: str = "EUR"
+) -> Tuple[list, list]:
+    """
+    Calculate the cumulative net invested capital over time (running total of
+    buy costs minus sell proceeds), for a historical trend chart.
+
+    Note: this reflects cost basis deployed over time from the transaction
+    history, not the historical market value of the portfolio (which would
+    require historical price data per token, not just FX rates).
+
+    Args:
+        df (pd.DataFrame): DataFrame with transactions (must include 'Date (UTC+1:00)').
+        exchange_rate (float): Exchange rate (USD to EUR if currency is EUR).
+        currency (str): Target currency (EUR or USD).
+
+    Returns:
+        Tuple[list, list]: (dates, cumulative_invested) sorted chronologically,
+            one point per calendar day with at least one transaction.
+    """
+    df = df.dropna(subset=['Date (UTC+1:00)'])
+    if df.empty:
+        return [], []
+
+    def row_flow(row) -> float:
+        price = row['Price']
+        orig_curr = str(row.get('Original Currency', 'EUR'))
+
+        if currency == "EUR" and orig_curr == "USD":
+            value = (row['Amount'] * price * exchange_rate) + (row['Fee'] * exchange_rate)
+        else:
+            value = (row['Amount'] * price) + row['Fee']
+
+        return value if str(row['Type']).lower() == 'buy' else -value
+
+    flows = df.apply(row_flow, axis=1)
+    days = df['Date (UTC+1:00)'].dt.date
+
+    daily = flows.groupby(days).sum().sort_index()
+    cumulative = daily.cumsum()
+
+    return list(cumulative.index), list(cumulative.values)
+
+
 def calculate_performance(
     invested: float,
     current_value: float
