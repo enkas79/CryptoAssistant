@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFileDialog,
     QComboBox, QFrame, QGroupBox, QGridLayout, QInputDialog, QDateEdit,
-    QCheckBox, QStackedWidget, QProgressBar, QApplication
+    QCheckBox, QStackedWidget, QProgressBar, QApplication, QScrollArea
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
@@ -33,7 +33,8 @@ from utils.calculations import (
     calculate_portfolio_allocation,
     calculate_token_stats,
     calculate_target_quantity,
-    calculate_performance
+    calculate_performance,
+    calculate_invested_over_time
 )
 from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
@@ -75,6 +76,7 @@ class TradingTerminalWindow(QWidget):
         self.tassi_storici = {}
         self.prezzi_live = {}
         self.dati_correnti = {'pmc': 0, 'qta': 0, 'costo_tot': 0, 'investito': 0}
+        self.chart_mode = 'torta'  # 'torta' (allocazione) o 'andamento' (capitale investito nel tempo)
 
         # Initialize tax calculator (default: Italy)
         self.tax_rules_manager = TaxRulesManager()
@@ -117,8 +119,11 @@ class TradingTerminalWindow(QWidget):
         # --- HEADER ---
         header = QFrame()
         header.setStyleSheet("background-color: white; border-bottom: 1px solid #ddd; padding: 10px; border-radius: 8px;")
-        layout_h = QHBoxLayout(header)
-        
+        layout_h_outer = QVBoxLayout(header)
+        layout_h_outer.setSpacing(8)
+        riga_filtri = QHBoxLayout()
+        riga_azioni = QHBoxLayout()
+
         self.btn_aggiungi = QPushButton("\u2795 Importa CSV")
         self.btn_aggiungi.clicked.connect(self.importa_files)
         
@@ -161,21 +166,25 @@ class TradingTerminalWindow(QWidget):
         self.combo_nazione.addItems(self.tax_rules_manager.list_countries())
         self.combo_nazione.currentIndexChanged.connect(self.on_nazione_changed)
 
-        layout_h.addWidget(QLabel("<b>Asset:</b>"))
-        layout_h.addWidget(self.combo_token)
-        layout_h.addSpacing(20)
-        layout_h.addWidget(self.check_usa_filtro)
-        layout_h.addWidget(QLabel("Da:"))
-        layout_h.addWidget(self.date_inizio)
-        layout_h.addWidget(QLabel("A:"))
-        layout_h.addWidget(self.date_fine)
-        layout_h.addWidget(self.combo_anno_filtro)
-        layout_h.addSpacing(20)
-        layout_h.addWidget(QLabel("<b>Nazione:</b>"))
-        layout_h.addWidget(self.combo_nazione)
-        layout_h.addStretch()
-        layout_h.addWidget(self.btn_valuta)
-        layout_h.addWidget(self.btn_aggiungi)
+        riga_filtri.addWidget(QLabel("<b>Asset:</b>"))
+        riga_filtri.addWidget(self.combo_token)
+        riga_filtri.addSpacing(20)
+        riga_filtri.addWidget(self.check_usa_filtro)
+        riga_filtri.addWidget(QLabel("Da:"))
+        riga_filtri.addWidget(self.date_inizio)
+        riga_filtri.addWidget(QLabel("A:"))
+        riga_filtri.addWidget(self.date_fine)
+        riga_filtri.addWidget(self.combo_anno_filtro)
+        riga_filtri.addStretch()
+
+        riga_azioni.addWidget(QLabel("<b>Nazione:</b>"))
+        riga_azioni.addWidget(self.combo_nazione)
+        riga_azioni.addStretch()
+        riga_azioni.addWidget(self.btn_valuta)
+        riga_azioni.addWidget(self.btn_aggiungi)
+
+        layout_h_outer.addLayout(riga_filtri)
+        layout_h_outer.addLayout(riga_azioni)
         layout_principale.addWidget(header)
         
         self.progress_bar = QProgressBar()
@@ -213,6 +222,25 @@ class TradingTerminalWindow(QWidget):
         self.lbl_chart_title.setStyleSheet("font-size: 22px; font-weight: bold; color: #333; margin: 15px 0;")
         self.chart_layout.addWidget(self.lbl_chart_title)
 
+        # Toggle tra vista "Allocazione" (torta) e "Andamento" (capitale investito nel tempo)
+        chart_toolbar = QHBoxLayout()
+        self.btn_vista_torta = QPushButton("\ud83e\udd67 Allocazione")
+        self.btn_vista_andamento = QPushButton("\ud83d\udcc8 Andamento")
+        for btn in (self.btn_vista_torta, self.btn_vista_andamento):
+            btn.setCheckable(True)
+            btn.setStyleSheet("""
+                QPushButton { padding: 6px 14px; border: 1px solid #007bff; border-radius: 5px; color: #007bff; background: white; }
+                QPushButton:checked { background-color: #007bff; color: white; }
+            """)
+        self.btn_vista_torta.setChecked(True)
+        self.btn_vista_torta.clicked.connect(lambda: self.set_chart_mode('torta'))
+        self.btn_vista_andamento.clicked.connect(lambda: self.set_chart_mode('andamento'))
+        chart_toolbar.addStretch()
+        chart_toolbar.addWidget(self.btn_vista_torta)
+        chart_toolbar.addWidget(self.btn_vista_andamento)
+        chart_toolbar.addStretch()
+        self.chart_layout.addLayout(chart_toolbar)
+
         self.figure = Figure(figsize=(8, 5), dpi=100)
         self.canvas = FigureCanvas(self.figure)
         self.chart_layout.addWidget(self.canvas)
@@ -223,7 +251,7 @@ class TradingTerminalWindow(QWidget):
 
         # Sidebar
         sidebar_widget = QFrame()
-        sidebar_widget.setFixedWidth(350)
+        sidebar_widget.setStyleSheet("background-color: transparent;")
         sidebar = QVBoxLayout(sidebar_widget)
 
         # 1. Patrimonio
@@ -319,7 +347,15 @@ class TradingTerminalWindow(QWidget):
         sidebar.addWidget(self.group_tasse)
 
         sidebar.addStretch()
-        layout_corpo.addWidget(sidebar_widget)
+
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidget(sidebar_widget)
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFixedWidth(370)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        layout_corpo.addWidget(sidebar_scroll)
         layout_principale.addLayout(layout_corpo)
 
         # Footer
@@ -342,6 +378,13 @@ class TradingTerminalWindow(QWidget):
         self.setLayout(layout_principale)
 
     # --- Methods ---
+
+    def set_chart_mode(self, mode: str):
+        """Switch the "Generale" chart between allocation (pie) and trend (line) view."""
+        self.chart_mode = mode
+        self.btn_vista_torta.setChecked(mode == 'torta')
+        self.btn_vista_andamento.setChecked(mode == 'andamento')
+        self.aggiorna_vista()
 
     def on_anno_filtro_changed(self, index: int):
         """Set the date range filter to a full calendar year when selected from the dropdown."""
@@ -546,23 +589,29 @@ class TradingTerminalWindow(QWidget):
             self.dati_correnti['qta'] = 0
             self.dati_correnti['pmc'] = 0
 
-            # Update pie chart
+            # Update chart (allocazione o andamento, in base a self.chart_mode)
             self.figure.clear()
-            ax = self.figure.add_axes([0.4, 0.0, 0.6, 1.0])
 
-            if values and sum(values) > 0:
-                wedges, texts = ax.pie(values, startangle=90, colors=colors, wedgeprops=dict(width=0.45))
-                legend_labels = []
-                total = sum(values)
-                for i, l in enumerate(labels):
-                    val = values[i]
-                    perc = (val / total) * 100
-                    legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb})")
-                ax.legend(wedges, legend_labels, title="Asset", loc="center left", 
-                         bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
+            if self.chart_mode == 'andamento':
+                self.lbl_chart_title.setText("📈 ANDAMENTO CAPITALE INVESTITO")
+                self._disegna_andamento(df_filtrato, simb)
             else:
-                ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
-                ax.set_axis_off()
+                self.lbl_chart_title.setText("📊 ALLOCAZIONE PORTAFOGLIO")
+                ax = self.figure.add_axes([0.4, 0.0, 0.6, 1.0])
+
+                if values and sum(values) > 0:
+                    wedges, texts = ax.pie(values, startangle=90, colors=colors, wedgeprops=dict(width=0.45))
+                    legend_labels = []
+                    total = sum(values)
+                    for i, l in enumerate(labels):
+                        val = values[i]
+                        perc = (val / total) * 100
+                        legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb})")
+                    ax.legend(wedges, legend_labels, title="Asset", loc="center left",
+                             bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
+                else:
+                    ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
+                    ax.set_axis_off()
 
             self.canvas.draw()
             self.aggiorna_performance_globale(tot_investito, tot_valore, simb)
@@ -646,6 +695,28 @@ class TradingTerminalWindow(QWidget):
             self.label_total_netto.setText(f"{valore_oggi:,.2f} {simb}")
 
             self.aggiorna_performance_globale(investito_singolo, valore_oggi, simb)
+
+    def _disegna_andamento(self, df, simb):
+        """
+        Draw the cumulative net invested capital over time (line chart).
+
+        Nota: mostra il capitale investito netto (buy - sell cumulati) dalle
+        transazioni, non il valore di mercato storico del portafoglio, che
+        richiederebbe prezzi storici per singolo asset non disponibili con
+        un piano CoinMarketCap gratuito.
+        """
+        dates, values = calculate_invested_over_time(df, self.tasso_cambio_live, self.valuta)
+
+        ax = self.figure.add_axes([0.12, 0.18, 0.85, 0.72])
+        if dates:
+            ax.plot(dates, values, color="#007bff", linewidth=2)
+            ax.fill_between(dates, values, color="#007bff", alpha=0.1)
+            ax.set_ylabel(f"Capitale investito ({simb})")
+            ax.grid(True, alpha=0.3)
+            self.figure.autofmt_xdate()
+        else:
+            ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
+            ax.set_axis_off()
 
     def aggiorna_performance_globale(self, investito, valore_attuale, simb):
         """Update performance display."""
