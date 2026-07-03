@@ -139,6 +139,15 @@ class TradingTerminalWindow(QWidget):
         self.date_fine.setDate(QDate.currentDate())
         self.date_fine.dateChanged.connect(lambda: self.aggiorna_vista())
 
+        # --- Selettore rapido Anno (imposta Da/A sull'intero anno) ---
+        self.combo_anno_filtro = QComboBox()
+        self.combo_anno_filtro.setMinimumWidth(90)
+        self.combo_anno_filtro.addItem("-- Anno --")
+        current_year = datetime.now().year
+        for y in range(current_year + 1, 2009, -1):
+            self.combo_anno_filtro.addItem(str(y))
+        self.combo_anno_filtro.currentIndexChanged.connect(self.on_anno_filtro_changed)
+
         self.combo_token = QComboBox()
         self.combo_token.setMinimumWidth(150)
         self.combo_token.currentIndexChanged.connect(lambda: self.aggiorna_vista())
@@ -160,6 +169,7 @@ class TradingTerminalWindow(QWidget):
         layout_h.addWidget(self.date_inizio)
         layout_h.addWidget(QLabel("A:"))
         layout_h.addWidget(self.date_fine)
+        layout_h.addWidget(self.combo_anno_filtro)
         layout_h.addSpacing(20)
         layout_h.addWidget(QLabel("<b>Nazione:</b>"))
         layout_h.addWidget(self.combo_nazione)
@@ -332,7 +342,30 @@ class TradingTerminalWindow(QWidget):
         self.setLayout(layout_principale)
 
     # --- Methods ---
-    
+
+    def on_anno_filtro_changed(self, index: int):
+        """Set the date range filter to a full calendar year when selected from the dropdown."""
+        text = self.combo_anno_filtro.currentText()
+        if not text.isdigit():
+            return
+
+        year = int(text)
+        oggi = QDate.currentDate()
+        inizio = QDate(year, 1, 1)
+        fine = oggi if year == oggi.year() else QDate(year, 12, 31)
+
+        self.date_inizio.blockSignals(True)
+        self.date_fine.blockSignals(True)
+        self.check_usa_filtro.blockSignals(True)
+        self.date_inizio.setDate(inizio)
+        self.date_fine.setDate(fine)
+        self.check_usa_filtro.setChecked(True)
+        self.date_inizio.blockSignals(False)
+        self.date_fine.blockSignals(False)
+        self.check_usa_filtro.blockSignals(False)
+
+        self.aggiorna_vista()
+
     def on_nazione_changed(self, index: int):
         """Update tax calculator when country changes."""
         country_name = self.combo_nazione.currentText()
