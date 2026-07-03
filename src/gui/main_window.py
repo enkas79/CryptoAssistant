@@ -497,6 +497,14 @@ class TradingTerminalWindow(QWidget):
                 df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta
             )
 
+            # Order by allocation percentage (descending)
+            if values:
+                order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+                values = [values[i] for i in order]
+                labels = [labels[i] for i in order]
+                colors = [colors[i] for i in order]
+                invested = [invested[i] for i in order]
+
             tot_investito = sum(invested)
             tot_valore = sum(values)
 
