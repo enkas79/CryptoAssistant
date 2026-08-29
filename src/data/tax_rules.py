@@ -52,15 +52,15 @@ class TaxRulesManager:
         "IT": TaxRule(
             country="Italia",
             country_code="IT",
-            capital_gain_rate=0.26,  # 26% per gli anni fino al 2025, 33% dal 2026 (vedi TaxCalculator)
-            capital_gain_threshold=2000.0,  # Franchigia annua di €2.000 (fino al 2025; azzerata dal 2026)
+            capital_gain_rate=0.26,  # 26% fino al 2025, 33% dal 2026 (L. 208/2025) - vedi TaxCalculator
+            capital_gain_threshold=2000.0,  # Franchigia annua di €2.000 solo fino al 31/12/2024 (L. 207/2024 l'ha abolita dal 2025)
             stamp_duty=2.0,  # EUR 2 per transaction
             stamp_duty_threshold=5000.0,  # EUR 5.000
             declaration_threshold=15000.0,  # EUR 15.000 (annual portfolio value)
             holding_period_exemption=0,  # Nessuna esenzione per detenzione (regola valida solo per valute estere)
             tax_free_allowance=0.0,  # No tax-free allowance in Italy
             fifo_required=True,  # FIFO is required
-            notes="26% sulle plusvalenze fino al 2025 (franchigia €2.000), 33% dal 2026 senza franchigia. Dichiarazione RW se portafoglio > €15.000."
+            notes="26% sulle plusvalenze fino al 2025 (franchigia €2.000 solo fino al 2024), 33% dal 2026 senza franchigia. Dichiarazione RW se portafoglio > €15.000."
         ),
         "FR": TaxRule(
             country="Francia",

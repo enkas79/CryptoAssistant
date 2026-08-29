@@ -124,6 +124,15 @@ class TradingTerminalWindow(QMainWindow):
             }
             QPushButton { border-radius: 5px; padding: 6px 12px; font-weight: bold; }
             QCheckBox { color: #0056b3; font-weight: bold; font-size: 13px; margin-right: 10px; }
+            QComboBox {
+                background-color: white; color: #333; border: 1px solid #cfcfcf;
+                border-radius: 4px; padding: 4px 8px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white; color: #333; border: 1px solid #cfcfcf;
+                selection-background-color: #007bff; selection-color: white;
+                outline: none;
+            }
         """)
 
         layout_principale = QVBoxLayout()

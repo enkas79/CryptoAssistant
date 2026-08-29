@@ -84,8 +84,10 @@ class TaxCalculator:
         """
         if self.rule.country_code == "IT":
             if year >= 2026:
-                return 0.33, 0.0
-            return 0.26, 2000.0
+                return 0.33, 0.0  # L. 208/2025: aliquota 33%, nessuna franchigia
+            if year == 2025:
+                return 0.26, 0.0  # L. 207/2024: aliquota 26%, franchigia abolita
+            return 0.26, 2000.0  # Fino al 2024: aliquota 26%, franchigia €2.000
         return self.rule.capital_gain_rate, self.rule.capital_gain_threshold
 
     def set_historical_rates(self, historical_rates: Dict[str, float]) -> None:
