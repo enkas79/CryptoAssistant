@@ -6,6 +6,7 @@ Contains the main GUI class (TradingTerminalWindow).
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
@@ -13,10 +14,20 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFileDialog,
     QComboBox, QFrame, QGroupBox, QGridLayout, QInputDialog, QDateEdit,
-    QCheckBox, QStackedWidget, QProgressBar, QApplication, QScrollArea
+    QCheckBox, QStackedWidget, QProgressBar, QApplication, QScrollArea,
+    QMainWindow
 )
 from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QAction
+
+
+def _leggi_versione() -> str:
+    """Legge il numero di versione da version.txt nella root del progetto."""
+    version_path = Path(__file__).resolve().parent.parent.parent / "version.txt"
+    try:
+        return version_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "sconosciuta"
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -40,7 +51,7 @@ from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
 
 
-class TradingTerminalWindow(QWidget):
+class TradingTerminalWindow(QMainWindow):
     """
     Main window for the CryptoAssistant application.
     Handles the GUI and user interactions.
@@ -94,6 +105,7 @@ class TradingTerminalWindow(QWidget):
     def initUI(self):
         """Initialize the user interface."""
         self.setWindowTitle("Trading Assistant Pro - Dashboard")
+        self._crea_menu_bar()
         self.setStyleSheet("""
             QWidget { background-color: #f4f7f6; font-family: 'Segoe UI', Arial; color: #333; }
             QGroupBox { 
@@ -375,7 +387,46 @@ class TradingTerminalWindow(QWidget):
         footer.addWidget(self.btn_esci)
         layout_principale.addLayout(footer)
 
-        self.setLayout(layout_principale)
+        central_widget = QWidget()
+        central_widget.setLayout(layout_principale)
+        self.setCentralWidget(central_widget)
+
+    def _crea_menu_bar(self):
+        """Crea la barra dei menu con il menu 'Aiuto' (Informazioni, Guida)."""
+        menu_aiuto = self.menuBar().addMenu("&Aiuto")
+
+        azione_info = QAction("Informazioni", self)
+        azione_info.triggered.connect(self.mostra_informazioni)
+        menu_aiuto.addAction(azione_info)
+
+        azione_guida = QAction("Guida", self)
+        azione_guida.triggered.connect(self.mostra_guida)
+        menu_aiuto.addAction(azione_guida)
+
+    def mostra_informazioni(self):
+        """Mostra la finestra 'Informazioni' con autore e versione (da version.txt)."""
+        versione = _leggi_versione()
+        QMessageBox.about(
+            self,
+            "Informazioni su CryptoAssistant",
+            f"<b>CryptoAssistant</b><br>"
+            f"Versione: {versione}<br><br>"
+            f"Autore: enkas79<br>"
+            f"Tool open-source per la gestione del portafoglio di criptovalute."
+        )
+
+    def mostra_guida(self):
+        """Mostra un dialogo con la guida rapida all'uso dell'applicazione."""
+        QMessageBox.information(
+            self,
+            "Guida - CryptoAssistant",
+            "<b>Guida rapida</b><br><br>"
+            "1. Importa le transazioni con '➕ Importa CSV'.<br>"
+            "2. Seleziona un asset o 'Generale' per la vista d'insieme.<br>"
+            "3. Usa il filtro date per limitare il periodo analizzato.<br>"
+            "4. Genera il report fiscale PDF dal pulsante dedicato.<br>"
+            "5. Salva le modifiche con '💾 Salva'."
+        )
 
     # --- Methods ---
 
