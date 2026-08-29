@@ -69,6 +69,25 @@ class TaxCalculator:
         if self.rule is None:
             raise ValueError(f"No tax rules found for country code: {country_code}")
 
+    def _effective_rate_and_threshold(self, year: int) -> Tuple[float, float]:
+        """
+        Restituisce l'aliquota e la franchigia effettivamente in vigore per l'anno
+        indicato. Per l'Italia la normativa è cambiata nel tempo: 26% con franchigia
+        di €2.000 fino al 2025, 33% senza franchigia dal 2026 (Legge di Bilancio 2025).
+        Per le altre nazioni si usano i valori fissi della regola.
+
+        Args:
+            year (int): Anno fiscale di riferimento.
+
+        Returns:
+            Tuple[float, float]: (aliquota, soglia/franchigia).
+        """
+        if self.rule.country_code == "IT":
+            if year >= 2026:
+                return 0.33, 0.0
+            return 0.26, 2000.0
+        return self.rule.capital_gain_rate, self.rule.capital_gain_threshold
+
     def set_historical_rates(self, historical_rates: Dict[str, float]) -> None:
         """
         Update the USD->EUR historical rates used to normalize transactions.
@@ -157,13 +176,14 @@ class TaxCalculator:
         
         # Apply FIFO to match buys and sells
         taxable_events: List[TaxableEvent] = self._apply_fifo(df)
-        
+
         # Calculate capital gains
         capital_gain = sum(event.gain for event in taxable_events if event.gain > 0)
-        
-        # Calculate capital gain tax
-        if capital_gain > self.rule.capital_gain_threshold:
-            capital_gain_tax = capital_gain * self.rule.capital_gain_rate
+
+        # Calculate capital gain tax (aliquota/franchigia in vigore per l'anno selezionato)
+        rate, threshold = self._effective_rate_and_threshold(year)
+        if capital_gain > threshold:
+            capital_gain_tax = capital_gain * rate
         else:
             capital_gain_tax = 0.0
         
@@ -188,10 +208,13 @@ class TaxCalculator:
                     f"{len(exempt_events)} transazioni esenti per detenzione > {self.rule.holding_period_exemption} anni."
                 )
         
-        if capital_gain <= self.rule.capital_gain_threshold:
-            notes.append(
-                f"Plusvalenze sotto la soglia annuale di €{self.rule.capital_gain_threshold:,.2f} - Nessuna tassazione."
-            )
+        if capital_gain <= threshold:
+            if threshold > 0:
+                notes.append(
+                    f"Plusvalenze sotto la franchigia annuale di €{threshold:,.2f} - Nessuna tassazione."
+                )
+        elif rate != self.rule.capital_gain_rate:
+            notes.append(f"Aliquota applicata per il {year}: {rate * 100:.0f}%.")
         
         if declaration_required:
             notes.append(
@@ -334,8 +357,12 @@ class TaxCalculator:
         Returns:
             Dict: Summary of tax calculations.
         """
+        if year is None:
+            year = datetime.now().year
+
         result = self.calculate_taxes(df, year)
-        
+        rate, threshold = self._effective_rate_and_threshold(year)
+
         return {
             "country": result.country,
             "year": result.year,
@@ -345,10 +372,11 @@ class TaxCalculator:
             "total_tax": round(result.total_tax, 2),
             "declaration_required": result.declaration_required,
             "taxable_transactions_count": len(result.taxable_transactions),
+            "taxable_transactions": result.taxable_transactions,
             "notes": result.notes,
             "rule": {
-                "capital_gain_rate": f"{self.rule.capital_gain_rate * 100}%",
-                "capital_gain_threshold": f"€{self.rule.capital_gain_threshold:,.2f}",
+                "capital_gain_rate": f"{rate * 100:.0f}%",
+                "capital_gain_threshold": f"€{threshold:,.2f}",
                 "stamp_duty": f"€{self.rule.stamp_duty:,.2f}",
                 "declaration_threshold": f"€{self.rule.declaration_threshold:,.2f}",
             }

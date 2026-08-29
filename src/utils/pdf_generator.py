@@ -143,3 +143,80 @@ class FiscalReportGenerator:
         except Exception as e:
             print(f"Errore generazione PDF: {e}")
             return False
+
+    def generate_tax_report(self, tax_summary: Dict, output_path: str) -> bool:
+        """
+        Genera il PDF del calcolo tasse per l'anno e la nazione selezionati,
+        con il dettaglio delle plusvalenze imponibili (FIFO).
+
+        Args:
+            tax_summary (Dict): Risultato di TaxCalculator.get_tax_summary().
+            output_path (str): Percorso di salvataggio del PDF.
+
+        Returns:
+            bool: True se generato con successo, False altrimenti.
+        """
+        try:
+            pdf = FPDF()
+            pdf.add_page()
+
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(190, 10, f"REPORT FISCALE {tax_summary['year']} - {tax_summary['country']}", ln=True)
+            pdf.ln(4)
+
+            rule = tax_summary["rule"]
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(190, 8, "RIEPILOGO", ln=True)
+            pdf.set_font("Arial", "", 10)
+            pdf.cell(190, 7, f"Plusvalenze totali: EUR {tax_summary['capital_gain']:,.2f}", ln=True)
+            pdf.cell(190, 7, f"Aliquota applicata: {rule['capital_gain_rate']} (franchigia: {rule['capital_gain_threshold']})", ln=True)
+            pdf.cell(190, 7, f"Imposta su plusvalenze: EUR {tax_summary['capital_gain_tax']:,.2f}", ln=True)
+            pdf.cell(190, 7, f"Imposta di bollo: EUR {tax_summary['stamp_duty']:,.2f}", ln=True)
+            pdf.set_font("Arial", "B", 10)
+            pdf.cell(190, 8, f"TOTALE IMPOSTE DOVUTE: EUR {tax_summary['total_tax']:,.2f}", ln=True)
+            pdf.set_font("Arial", "", 10)
+
+            if tax_summary["declaration_required"]:
+                pdf.ln(2)
+                pdf.cell(190, 7, f"Dichiarazione RW obbligatoria (soglia {rule['declaration_threshold']}).", ln=True)
+
+            if tax_summary["notes"]:
+                pdf.ln(4)
+                pdf.set_font("Arial", "B", 11)
+                pdf.cell(190, 7, "Note:", ln=True)
+                pdf.set_font("Arial", "", 9)
+                for note in tax_summary["notes"]:
+                    note_safe = str(note).encode('latin-1', 'replace').decode('latin-1').replace('?', '')
+                    pdf.multi_cell(190, 6, f"- {note_safe}")
+
+            taxable_transactions = tax_summary.get("taxable_transactions", [])
+            if taxable_transactions:
+                pdf.ln(6)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(190, 8, "DETTAGLIO PLUSVALENZE IMPONIBILI (FIFO)", ln=True)
+
+                pdf.set_font("Arial", "B", 8)
+                pdf.cell(25, 8, "Data", 1)
+                pdf.cell(25, 8, "Token", 1)
+                pdf.cell(25, 8, "Qta", 1)
+                pdf.cell(30, 8, "Pr. Acquisto", 1)
+                pdf.cell(30, 8, "Pr. Vendita", 1)
+                pdf.cell(30, 8, "Plusvalenza", 1, ln=True)
+
+                pdf.set_font("Arial", "", 8)
+                for event in taxable_transactions:
+                    if pdf.get_y() > 270:
+                        pdf.add_page()
+                    pdf.cell(25, 7, str(event["date"]), 1)
+                    pdf.cell(25, 7, str(event["token"])[:10], 1)
+                    pdf.cell(25, 7, f"{event['amount']:.6f}", 1)
+                    pdf.cell(30, 7, f"{event['buy_price']:,.4f}", 1)
+                    pdf.cell(30, 7, f"{event['sell_price']:,.4f}", 1)
+                    pdf.cell(30, 7, f"{event['gain']:,.2f}", 1, ln=True)
+
+            pdf.output(output_path)
+            return True
+
+        except Exception as e:
+            print(f"Errore generazione PDF fiscale: {e}")
+            return False

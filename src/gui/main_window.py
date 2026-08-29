@@ -351,10 +351,15 @@ class TradingTerminalWindow(QMainWindow):
         self.label_tasse_risultato.setWordWrap(True)
         self.label_tasse_risultato.setStyleSheet("background-color: #fff3cd; padding: 10px; border: 1px solid #ffc107; border-radius: 5px; color: #856404;")
         
+        btn_report_anno_tasse = QPushButton("📄 Report Fiscale Anno")
+        btn_report_anno_tasse.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold; padding: 8px;")
+        btn_report_anno_tasse.clicked.connect(self.genera_pdf_tasse_anno)
+
         layout_tasse.addWidget(QLabel("Anno:"))
         layout_tasse.addWidget(self.combo_anno_tasse)
         layout_tasse.addWidget(btn_calcola_tasse)
         layout_tasse.addWidget(self.label_tasse_risultato)
+        layout_tasse.addWidget(btn_report_anno_tasse)
         self.group_tasse.setLayout(layout_tasse)
         sidebar.addWidget(self.group_tasse)
 
@@ -506,6 +511,37 @@ class TradingTerminalWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Errore", f"Errore nel calcolo delle tasse: {e}")
             self.label_tasse_risultato.setText("Errore nel calcolo delle tasse.")
+
+    def genera_pdf_tasse_anno(self):
+        """Genera il report fiscale PDF con il calcolo tasse dell'anno selezionato."""
+        if self.df_master is None or self.df_master.empty:
+            QMessageBox.warning(self, "Report Fiscale", "Nessun dato disponibile.")
+            return
+
+        year = int(self.combo_anno_tasse.currentText())
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Salva Report Fiscale", f"Report_Fiscale_{year}.pdf", "PDF (*.pdf)"
+        )
+        if not path:
+            return
+
+        try:
+            tax_summary = self.tax_calculator.get_tax_summary(self.df_master, year)
+
+            generator = FiscalReportGenerator(
+                live_prices=self.prezzi_live,
+                exchange_rate=self.tasso_cambio_live,
+                currency=self.valuta
+            )
+            success = generator.generate_tax_report(tax_summary, path)
+
+            if success:
+                QMessageBox.information(self, "Report Fiscale", "Report Fiscale dell'anno generato con successo!")
+            else:
+                QMessageBox.critical(self, "Errore PDF", "Errore nella generazione del report fiscale.")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Errore nella generazione del report fiscale: {e}")
 
     def importa_files(self):
         """Import CSV files with transactions."""
