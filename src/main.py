@@ -25,25 +25,41 @@ from gui.main_window import TradingTerminalWindow
 
 
 def get_project_root() -> Path:
-    """Get the project root directory."""
+    """Get the project root directory (usata solo per risorse di sola lettura, es. version.txt)."""
     return Path(__file__).parent.parent
 
 
+def get_user_data_dir() -> Path:
+    """
+    Restituisce una cartella scrivibile per l'utente corrente, dove salvare
+    configurazione e dati. Necessaria perché quando l'app è installata in
+    'C:\\Program Files\\...' la cartella di installazione non è scrivibile
+    senza permessi di amministratore (causa PermissionError/WinError 5).
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or str(Path.home())
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    data_dir = Path(base) / "CryptoAssistant"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
 def load_config() -> dict:
-    """Load configuration from config/config.json."""
-    config_path = get_project_root() / "config" / "config.json"
+    """Load configuration from the user data directory."""
+    config_path = get_user_data_dir() / "config.json"
     if config_path.exists():
-        with open(config_path, "r") as f:
-            return json.load(f)
+        try:
+            with open(config_path, "r") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
     return {"api_key": None, "default_currency": "EUR"}
 
 
 def save_config(config: dict) -> None:
-    """Save configuration to config/config.json."""
-    config_path = get_project_root() / "config" / "config.json"
-    config_dir = config_path.parent
-    if not config_dir.exists():
-        config_dir.mkdir(parents=True, exist_ok=True)
+    """Save configuration to the user data directory."""
+    config_path = get_user_data_dir() / "config.json"
     with open(config_path, "w") as f:
         json.dump(config, f, indent=4)
 
@@ -77,23 +93,32 @@ def main():
     if app is None:
         app = QApplication(sys.argv)
     
-    # Load configuration
-    config = load_config()
-    api_key = config.get("api_key")
-    
-    # If API Key is missing or placeholder, ask the user
-    if not api_key or api_key == "INSERISCI_LA_TUA_API_KEY_COINMARKETCAP":
-        api_key = get_api_key_from_user()
-        if api_key:
-            config["api_key"] = api_key
-            save_config(config)
-        else:
-            # User cancelled, exit gracefully
-            sys.exit(0)
-    
-    # Initialize database
-    db_file = get_project_root() / config.get("data_file", "data/transactions.csv")
-    database = TransactionDatabase(str(db_file))
+    try:
+        # Load configuration
+        config = load_config()
+        api_key = config.get("api_key")
+
+        # If API Key is missing or placeholder, ask the user
+        if not api_key or api_key == "INSERISCI_LA_TUA_API_KEY_COINMARKETCAP":
+            api_key = get_api_key_from_user()
+            if api_key:
+                config["api_key"] = api_key
+                save_config(config)
+            else:
+                # User cancelled, exit gracefully
+                sys.exit(0)
+
+        # Initialize database (i dati vengono salvati nella cartella utente scrivibile)
+        db_file = get_user_data_dir() / config.get("data_file", "transactions.csv")
+        database = TransactionDatabase(str(db_file))
+    except OSError as e:
+        QMessageBox.critical(
+            None,
+            "Errore di configurazione",
+            f"Impossibile leggere o salvare i dati dell'applicazione:\n\n{e}\n\n"
+            "Verifica di avere i permessi di scrittura nella cartella utente."
+        )
+        sys.exit(1)
     
     # Initialize API clients
     cmc_api = CoinMarketCapAPI(api_key)
