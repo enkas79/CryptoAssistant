@@ -158,61 +158,70 @@ class TradingTerminalWindow(QMainWindow):
 
         self.btn_aggiungi = QPushButton("\u2795 Importa CSV")
         self.btn_aggiungi.clicked.connect(self.importa_files)
-        
-        self.check_usa_filtro = QCheckBox("\u2705 ATTIVA FILTRO DATE")
+
+        # --- Selettore rapido Anno (imposta Da/A sull'intero anno) ---
+        self.combo_anno_filtro = QComboBox()
+        self.combo_anno_filtro.setMinimumWidth(80)
+        self.combo_anno_filtro.setToolTip("Seleziona un anno per filtrare rapidamente l'intero periodo")
+        self.combo_anno_filtro.addItem("Anno")
+        current_year = datetime.now().year
+        for y in range(current_year + 1, 2009, -1):
+            self.combo_anno_filtro.addItem(str(y))
+        self.combo_anno_filtro.currentIndexChanged.connect(self.on_anno_filtro_changed)
+
+        self.check_usa_filtro = QCheckBox("Filtro periodo attivo")
+        self.check_usa_filtro.setToolTip("Se disattivo, viene mostrato lo storico completo")
+        self.check_usa_filtro.toggled.connect(self._aggiorna_stato_date_filtro)
         self.check_usa_filtro.toggled.connect(lambda: self.aggiorna_vista())
 
         self.date_inizio = QDateEdit()
         self.date_inizio.setCalendarPopup(True)
         self.date_inizio.setDisplayFormat("dd/MM/yyyy")
-        self.date_inizio.setFixedWidth(120)
+        self.date_inizio.setFixedWidth(100)
         self.date_inizio.setDate(QDate.currentDate().addYears(-1))
         self.date_inizio.dateChanged.connect(lambda: self.aggiorna_vista())
 
         self.date_fine = QDateEdit()
         self.date_fine.setCalendarPopup(True)
         self.date_fine.setDisplayFormat("dd/MM/yyyy")
-        self.date_fine.setFixedWidth(120)
+        self.date_fine.setFixedWidth(100)
         self.date_fine.setDate(QDate.currentDate())
         self.date_fine.dateChanged.connect(lambda: self.aggiorna_vista())
 
-        # --- Selettore rapido Anno (imposta Da/A sull'intero anno) ---
-        self.combo_anno_filtro = QComboBox()
-        self.combo_anno_filtro.setMinimumWidth(90)
-        self.combo_anno_filtro.addItem("-- Anno --")
-        current_year = datetime.now().year
-        for y in range(current_year + 1, 2009, -1):
-            self.combo_anno_filtro.addItem(str(y))
-        self.combo_anno_filtro.currentIndexChanged.connect(self.on_anno_filtro_changed)
+        # Le date sono modificabili solo quando il filtro periodo e' attivo
+        self._aggiorna_stato_date_filtro(self.check_usa_filtro.isChecked())
 
         self.combo_token = QComboBox()
-        self.combo_token.setMinimumWidth(150)
+        self.combo_token.setMinimumWidth(140)
         self.combo_token.currentIndexChanged.connect(lambda: self.aggiorna_vista())
 
-        self.btn_valuta = QPushButton(f"\ud83d\udcb1 Valuta: {self.valuta}")
+        self.btn_valuta = QPushButton(f"\ud83d\udcb1 {self.valuta}")
+        self.btn_valuta.setToolTip("Cambia valuta di visualizzazione (EUR/USD)")
         self.btn_valuta.clicked.connect(self.toggle_valuta)
 
         # --- Selettore Nazione per Tasse ---
         self.combo_nazione = QComboBox()
-        self.combo_nazione.setMinimumWidth(120)
+        self.combo_nazione.setMinimumWidth(110)
         self.combo_nazione.addItems(self.tax_rules_manager.list_countries())
         self.combo_nazione.currentIndexChanged.connect(self.on_nazione_changed)
 
+        riga_filtri.setSpacing(6)
         riga_filtri.addWidget(QLabel("<b>Asset:</b>"))
         riga_filtri.addWidget(self.combo_token)
-        riga_filtri.addSpacing(20)
-        riga_filtri.addWidget(self.check_usa_filtro)
-        riga_filtri.addWidget(QLabel("Da:"))
-        riga_filtri.addWidget(self.date_inizio)
-        riga_filtri.addWidget(QLabel("A:"))
-        riga_filtri.addWidget(self.date_fine)
+        riga_filtri.addSpacing(14)
+        riga_filtri.addWidget(QLabel("<b>Periodo:</b>"))
         riga_filtri.addWidget(self.combo_anno_filtro)
+        riga_filtri.addWidget(self.check_usa_filtro)
+        riga_filtri.addWidget(self.date_inizio)
+        riga_filtri.addWidget(QLabel("\u2192"))
+        riga_filtri.addWidget(self.date_fine)
         riga_filtri.addStretch()
+        riga_filtri.addWidget(QLabel("<b>Nazione:</b>"))
+        riga_filtri.addWidget(self.combo_nazione)
 
-        riga_azioni.addWidget(QLabel("<b>Nazione:</b>"))
-        riga_azioni.addWidget(self.combo_nazione)
-        riga_azioni.addStretch()
+        riga_azioni.setSpacing(8)
         riga_azioni.addWidget(self.btn_valuta)
+        riga_azioni.addStretch()
         riga_azioni.addWidget(self.btn_aggiungi)
 
         layout_h_outer.addLayout(riga_filtri)
@@ -511,6 +520,11 @@ class TradingTerminalWindow(QMainWindow):
         avvia_installer_e_esci(percorso_installer)
 
     # --- Methods ---
+
+    def _aggiorna_stato_date_filtro(self, attivo: bool):
+        """Abilita/disabilita visivamente i campi Da/A in base al filtro periodo."""
+        self.date_inizio.setEnabled(attivo)
+        self.date_fine.setEnabled(attivo)
 
     def set_chart_mode(self, mode: str):
         """Switch the "Generale" chart between allocation (pie) and trend (line) view."""
