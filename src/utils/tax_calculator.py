@@ -173,9 +173,26 @@ class TaxCalculator:
                 total_tax=0.0,
                 taxable_transactions=[],
                 declaration_required=False,
-                notes=["Nessuna transazione per l'anno selezionato."]
+                notes=["Nessuna transazione per l'anno selezionato."],
+                all_transactions=[]
             )
-        
+
+        # Tutte le compravendite dell'anno (buy e sell, incluso crypto/crypto),
+        # a prescindere dal loro esito ai fini FIFO/plusvalenza.
+        all_transactions = [
+            {
+                "date": row['Date (UTC+1:00)'].strftime("%d/%m/%Y"),
+                "token": row['Token'],
+                "type": row['Type'],
+                "amount": row['Amount'],
+                "price": row['Price'],
+                "total": row['Amount'] * row['Price'],
+                "notes": row.get('Notes', '')
+            }
+            for _, row in df.sort_values('Date (UTC+1:00)').iterrows()
+            if str(row['Type']).lower() in ('buy', 'sell')
+        ]
+
         # Apply FIFO to match buys and sells
         taxable_events: List[TaxableEvent] = self._apply_fifo(df)
 
@@ -243,7 +260,8 @@ class TaxCalculator:
                 for event in taxable_events if event.gain > 0
             ],
             declaration_required=declaration_required,
-            notes=notes
+            notes=notes,
+            all_transactions=all_transactions
         )
     
     def _apply_fifo(self, df: pd.DataFrame) -> List[TaxableEvent]:
@@ -376,6 +394,7 @@ class TaxCalculator:
             "declaration_required": result.declaration_required,
             "taxable_transactions_count": len(result.taxable_transactions),
             "taxable_transactions": result.taxable_transactions,
+            "all_transactions": result.all_transactions,
             "notes": result.notes,
             "rule": {
                 "capital_gain_rate": f"{rate * 100:.0f}%",

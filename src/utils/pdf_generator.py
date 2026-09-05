@@ -250,6 +250,36 @@ class FiscalReportGenerator:
                     pdf.cell(30, 7, f"{event['sell_price']:,.4f}", 1)
                     pdf.cell(30, 7, f"{event['gain']:,.2f}", 1, ln=True)
 
+            all_transactions = tax_summary.get("all_transactions", [])
+            if all_transactions:
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(190, 8, "DETTAGLIO DI TUTTE LE COMPRAVENDITE DELL'ANNO", ln=True)
+                pdf.set_font("Arial", "", 9)
+                pdf.cell(190, 6, "Include acquisti, vendite e swap crypto/crypto (registrati come vendita + acquisto).", ln=True)
+                pdf.ln(2)
+
+                pdf.set_font("Arial", "B", 8)
+                pdf.cell(22, 8, "Data", 1)
+                pdf.cell(18, 8, "Token", 1)
+                pdf.cell(15, 8, "Tipo", 1)
+                pdf.cell(25, 8, "Qta", 1)
+                pdf.cell(25, 8, "Prezzo", 1)
+                pdf.cell(25, 8, f"Totale ({self.valuta_pdf})", 1)
+                pdf.cell(60, 8, "Note", 1, ln=True)
+
+                pdf.set_font("Arial", "", 8)
+                for tx in all_transactions:
+                    if pdf.get_y() > 270:
+                        pdf.add_page()
+                    pdf.cell(22, 7, str(tx["date"]), 1)
+                    pdf.cell(18, 7, _pdf_safe(tx["token"])[:8], 1)
+                    pdf.cell(15, 7, str(tx["type"])[:4], 1)
+                    pdf.cell(25, 7, f"{tx['amount']:.6f}", 1)
+                    pdf.cell(25, 7, f"{tx['price']:,.4f}", 1)
+                    pdf.cell(25, 7, f"{tx['total']:,.2f}", 1)
+                    pdf.cell(60, 7, _pdf_safe(tx.get("notes", ""))[:30], 1, ln=True)
+
             pdf.output(output_path)
             return True
 

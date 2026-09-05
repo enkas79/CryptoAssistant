@@ -40,6 +40,7 @@ class TaxCalculationResult:
     taxable_transactions: List[Dict]  # List of taxable transactions
     declaration_required: bool  # Whether declaration is required
     notes: List[str] = field(default_factory=list)  # Warnings or notes
+    all_transactions: List[Dict] = field(default_factory=list)  # Tutte le compravendite dell'anno (buy/sell)
 
 
 class TaxRulesManager:
