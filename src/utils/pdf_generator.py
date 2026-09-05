@@ -10,11 +10,16 @@ import pandas as pd
 from fpdf import FPDF
 
 
+def _pdf_safe(text) -> str:
+    """Rende una stringa compatibile col font core latin-1 di fpdf2 (niente €, emoji, ecc.)."""
+    return str(text).encode('latin-1', 'replace').decode('latin-1').replace('?', '')
+
+
 class FiscalReportGenerator:
     """
     Generates fiscal reports in PDF format for cryptocurrency transactions.
     """
-    
+
     def __init__(self, live_prices: Dict[str, float], exchange_rate: float, currency: str = "EUR"):
         """
         Initialize the generator.
@@ -189,7 +194,7 @@ class FiscalReportGenerator:
             pdf.add_page()
 
             pdf.set_font("Arial", "B", 16)
-            pdf.cell(190, 10, f"REPORT FISCALE {tax_summary['year']} - {tax_summary['country']}", ln=True)
+            pdf.cell(190, 10, _pdf_safe(f"REPORT FISCALE {tax_summary['year']} - {tax_summary['country']}"), ln=True)
             pdf.ln(4)
 
             rule = tax_summary["rule"]
@@ -197,7 +202,9 @@ class FiscalReportGenerator:
             pdf.cell(190, 8, "RIEPILOGO", ln=True)
             pdf.set_font("Arial", "", 10)
             pdf.cell(190, 7, f"Plusvalenze totali: EUR {tax_summary['capital_gain']:,.2f}", ln=True)
-            pdf.cell(190, 7, f"Aliquota applicata: {rule['capital_gain_rate']} (franchigia: {rule['capital_gain_threshold']})", ln=True)
+            pdf.cell(190, 7, _pdf_safe(
+                f"Aliquota applicata: {rule['capital_gain_rate']} (franchigia: {rule['capital_gain_threshold']})"
+            ), ln=True)
             pdf.cell(190, 7, f"Imposta su plusvalenze: EUR {tax_summary['capital_gain_tax']:,.2f}", ln=True)
             pdf.cell(190, 7, f"Imposta di bollo: EUR {tax_summary['stamp_duty']:,.2f}", ln=True)
             pdf.set_font("Arial", "B", 10)
@@ -206,7 +213,9 @@ class FiscalReportGenerator:
 
             if tax_summary["declaration_required"]:
                 pdf.ln(2)
-                pdf.cell(190, 7, f"Dichiarazione RW obbligatoria (soglia {rule['declaration_threshold']}).", ln=True)
+                pdf.cell(190, 7, _pdf_safe(
+                    f"Dichiarazione RW obbligatoria (soglia {rule['declaration_threshold']})."
+                ), ln=True)
 
             if tax_summary["notes"]:
                 pdf.ln(4)
@@ -214,8 +223,7 @@ class FiscalReportGenerator:
                 pdf.cell(190, 7, "Note:", ln=True)
                 pdf.set_font("Arial", "", 9)
                 for note in tax_summary["notes"]:
-                    note_safe = str(note).encode('latin-1', 'replace').decode('latin-1').replace('?', '')
-                    pdf.multi_cell(190, 6, f"- {note_safe}")
+                    pdf.multi_cell(190, 6, _pdf_safe(f"- {note}"))
 
             taxable_transactions = tax_summary.get("taxable_transactions", [])
             if taxable_transactions:

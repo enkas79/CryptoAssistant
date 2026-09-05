@@ -343,7 +343,8 @@ class TaxCalculator:
             
             if net_amount > 0:
                 # Use the last price of the year as the current price
-                last_price = token_df[token_df['Date (UTC+1:00)'].dt.year == year]['Price'].iloc[-1] if not token_df.empty else 0
+                prices_anno = token_df[token_df['Date (UTC+1:00)'].dt.year == year]['Price']
+                last_price = prices_anno.iloc[-1] if not prices_anno.empty else token_df['Price'].iloc[-1]
                 portfolio_value += net_amount * last_price
         
         return portfolio_value

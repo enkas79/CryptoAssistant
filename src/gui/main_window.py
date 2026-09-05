@@ -22,8 +22,15 @@ from PyQt6.QtGui import QColor, QAction
 
 
 def _leggi_versione() -> str:
-    """Legge il numero di versione da version.txt nella root del progetto."""
-    version_path = Path(__file__).resolve().parent.parent.parent / "version.txt"
+    """Legge il numero di versione da version.txt.
+
+    In sviluppo il file si trova nella root del progetto; nell'eseguibile
+    PyInstaller (onedir) viene copiato accanto all'exe (sys._MEIPASS).
+    """
+    if getattr(sys, "frozen", False):
+        version_path = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "version.txt"
+    else:
+        version_path = Path(__file__).resolve().parent.parent.parent / "version.txt"
     try:
         return version_path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -49,6 +56,7 @@ from utils.calculations import (
 )
 from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
+from utils.updater import UpdateCheckWorker, UpdateDownloadWorker, avvia_installer_e_esci
 
 
 class TradingTerminalWindow(QMainWindow):
@@ -95,6 +103,9 @@ class TradingTerminalWindow(QMainWindow):
 
         # Initialize UI
         self.initUI()
+
+        # Controllo aggiornamenti automatico in background, senza bloccare la GUI
+        self._controlla_aggiornamenti(automatico=True)
         
         # Load data and update UI
         self.df_master = self.database.get_dataframe()
@@ -417,6 +428,10 @@ class TradingTerminalWindow(QMainWindow):
         azione_guida.triggered.connect(self.mostra_guida)
         menu_aiuto.addAction(azione_guida)
 
+        azione_update = QAction("Controlla Aggiornamenti", self)
+        azione_update.triggered.connect(lambda: self._controlla_aggiornamenti(automatico=False))
+        menu_aiuto.addAction(azione_update)
+
     def mostra_informazioni(self):
         """Mostra la finestra 'Informazioni' con autore e versione (da version.txt)."""
         versione = _leggi_versione()
@@ -441,6 +456,59 @@ class TradingTerminalWindow(QMainWindow):
             "4. Genera il report fiscale PDF dal pulsante dedicato.<br>"
             "5. Salva le modifiche con '💾 Salva'."
         )
+
+    # --- Autoupdate ---
+
+    def _controlla_aggiornamenti(self, automatico: bool):
+        """Avvia in background la verifica di nuove versioni su GitHub Releases."""
+        self._update_automatico = automatico
+        versione_corrente = _leggi_versione()
+
+        self._update_check_worker = UpdateCheckWorker(versione_corrente)
+        self._update_check_worker.aggiornamento_disponibile.connect(self._on_aggiornamento_disponibile)
+        self._update_check_worker.nessun_aggiornamento.connect(self._on_nessun_aggiornamento)
+        self._update_check_worker.errore.connect(self._on_errore_controllo_aggiornamenti)
+        self._update_check_worker.start()
+
+    def _on_aggiornamento_disponibile(self, versione: str, asset_url: str, changelog: str):
+        """Mostra il changelog e chiede conferma prima di scaricare l'aggiornamento."""
+        risposta = QMessageBox.question(
+            self,
+            "Aggiornamento disponibile",
+            f"È disponibile la versione {versione}.\n\n"
+            f"Note di rilascio:\n{changelog}\n\n"
+            "Vuoi scaricarla e installarla ora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if risposta != QMessageBox.StandardButton.Yes:
+            return
+
+        if not asset_url:
+            QMessageBox.warning(
+                self, "Aggiornamento",
+                "Nessun installer trovato nella release. Scaricala manualmente da GitHub."
+            )
+            return
+
+        self._update_download_worker = UpdateDownloadWorker(asset_url)
+        self._update_download_worker.completato.connect(self._on_download_completato)
+        self._update_download_worker.errore.connect(self._on_errore_controllo_aggiornamenti)
+        self._update_download_worker.start()
+
+    def _on_nessun_aggiornamento(self):
+        if not self._update_automatico:
+            QMessageBox.information(self, "Aggiornamenti", "Stai già usando l'ultima versione disponibile.")
+
+    def _on_errore_controllo_aggiornamenti(self, messaggio: str):
+        if not self._update_automatico:
+            QMessageBox.warning(self, "Aggiornamenti", f"Impossibile verificare gli aggiornamenti:\n{messaggio}")
+
+    def _on_download_completato(self, percorso_installer: str):
+        QMessageBox.information(
+            self, "Aggiornamento",
+            "Download completato. L'applicazione verrà chiusa per avviare l'installazione."
+        )
+        avvia_installer_e_esci(percorso_installer)
 
     # --- Methods ---
 
