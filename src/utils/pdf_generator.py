@@ -52,19 +52,26 @@ class FiscalReportGenerator:
         try:
             pdf = FPDF()
             
+            # Normalizza le date (possono arrivare come datetime.date o datetime.datetime)
+            start_d = start_date.date() if hasattr(start_date, "hour") else start_date
+            end_d = end_date.date() if hasattr(end_date, "hour") else end_date
+
             # Filter data if dates are provided
-            if start_date and end_date:
-                mask = (df['Date (UTC+1:00)'].dt.date >= start_date.date()) & \
-                       (df['Date (UTC+1:00)'].dt.date <= end_date.date())
-                df_filtered = df.loc[mask]
-                periodo_str = f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}"
+            if start_d and end_d:
+                mask_periodo = (df['Date (UTC+1:00)'].dt.date >= start_d) & \
+                               (df['Date (UTC+1:00)'].dt.date <= end_d)
+                df_filtered = df.loc[mask_periodo]
+                mask_precedente = df['Date (UTC+1:00)'].dt.date < start_d
+                df_precedente = df.loc[mask_precedente]
+                periodo_str = f"{start_d.strftime('%d/%m/%Y')} - {end_d.strftime('%d/%m/%Y')}"
             else:
                 df_filtered = df
+                df_precedente = df.iloc[0:0]
                 periodo_str = "Storico Completo"
-            
+
             if df_filtered.empty:
                 return False
-            
+
             # Group by token
             for token in sorted(df_filtered['Token'].unique()):
                 pdf.add_page()
@@ -73,7 +80,28 @@ class FiscalReportGenerator:
                 pdf.set_font("Arial", "", 10)
                 pdf.cell(190, 8, f"Periodo: {periodo_str}", ln=True)
                 pdf.ln(5)
-                
+
+                # Saldo iniziale (movimenti antecedenti al periodo selezionato)
+                prec = df_precedente[df_precedente['Token'] == token]
+                qta_iniziale = prec[prec['Type'] == 'buy']['Amount'].sum() - \
+                               prec[prec['Type'] == 'sell']['Amount'].sum()
+                investito_iniziale = 0.0
+                for _, prow in prec[prec['Type'] == 'buy'].iterrows():
+                    factor_p = 1.0
+                    orig_p = str(prow.get('Original Currency', 'EUR'))
+                    if self.currency == "EUR" and orig_p == "USD":
+                        factor_p = self.exchange_rate
+                    investito_iniziale += prow['Amount'] * prow['Price'] * factor_p + prow['Fee'] * factor_p
+
+                if not prec.empty:
+                    pdf.set_font("Arial", "B", 10)
+                    pdf.cell(190, 7,
+                        f"Saldo iniziale (ante {periodo_str.split(' - ')[0]}): "
+                        f"Qta {qta_iniziale:,.6f} | Investito {investito_iniziale:,.2f} {self.valuta_pdf}",
+                        ln=True)
+                    pdf.set_font("Arial", "", 10)
+                    pdf.ln(2)
+
                 # Table header
                 pdf.set_font("Arial", "B", 8)
                 pdf.cell(25, 8, "Data", 1)
@@ -82,13 +110,13 @@ class FiscalReportGenerator:
                 pdf.cell(30, 8, f"Prezzo", 1)
                 pdf.cell(30, 8, f"Totale ({self.valuta_pdf})", 1)
                 pdf.cell(60, 8, "Note", 1, ln=True)
-                
+
                 # Table rows
                 pdf.set_font("Arial", "", 8)
                 sub = df_filtered[df_filtered['Token'] == token]
-                
-                investito_f = 0.0
-                
+
+                investito_f = investito_iniziale
+
                 for _, row in sub.iterrows():
                     try:
                         d_str = row['Date (UTC+1:00)'].strftime('%d/%m/%Y')
@@ -127,7 +155,7 @@ class FiscalReportGenerator:
                 pdf.set_font("Arial", "", 10)
                 
                 buys = sub[sub['Type'] == 'buy']
-                qta_f = buys['Amount'].sum() - sub[sub['Type'] == 'sell']['Amount'].sum()
+                qta_f = qta_iniziale + buys['Amount'].sum() - sub[sub['Type'] == 'sell']['Amount'].sum()
                 val_f = qta_f * (self.live_prices.get(token, 0) * self.mult)
                 perf_f = ((val_f / investito_f) - 1) * 100 if investito_f > 0 else 0
                 
