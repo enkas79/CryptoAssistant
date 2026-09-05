@@ -229,7 +229,7 @@ class FiscalReportGenerator:
             if taxable_transactions:
                 pdf.ln(6)
                 pdf.set_font("Arial", "B", 12)
-                pdf.cell(190, 8, "DETTAGLIO PLUSVALENZE IMPONIBILI (FIFO)", ln=True)
+                pdf.cell(190, 8, "DETTAGLIO PLUSVALENZE/MINUSVALENZE (FIFO)", ln=True)
 
                 pdf.set_font("Arial", "B", 8)
                 pdf.cell(25, 8, "Data", 1)

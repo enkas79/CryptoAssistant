@@ -154,16 +154,20 @@ class TaxCalculator:
         """
         if year is None:
             year = datetime.now().year
-        
-        # Filter transactions for the year
+
         df = df.copy()
         df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
-        df = df[df['Date (UTC+1:00)'].dt.year == year]
 
-        # Normalize USD transactions to EUR (tax rules are EUR-denominated)
-        df = self._normalize_to_eur(df)
+        # Il costo di carico FIFO richiede l'intero storico fino a fine anno:
+        # una vendita del 2026 puo' chiudere un acquisto fatto nel 2023, 2024 o 2025.
+        # Filtrare subito per il solo anno selezionato (come prima) faceva perdere
+        # gli acquisti pregressi e produceva plusvalenze/minusvalenze errate.
+        df_storico = df[df['Date (UTC+1:00)'].dt.year <= year].copy()
+        df_storico = self._normalize_to_eur(df_storico)
 
-        if df.empty:
+        df_anno = df_storico[df_storico['Date (UTC+1:00)'].dt.year == year]
+
+        if df_anno.empty:
             return TaxCalculationResult(
                 country=self.rule.country,
                 year=year,
@@ -189,15 +193,24 @@ class TaxCalculator:
                 "total": row['Amount'] * row['Price'],
                 "notes": row.get('Notes', '')
             }
-            for _, row in df.sort_values('Date (UTC+1:00)').iterrows()
+            for _, row in df_anno.sort_values('Date (UTC+1:00)').iterrows()
             if str(row['Type']).lower() in ('buy', 'sell')
         ]
 
-        # Apply FIFO to match buys and sells
-        taxable_events: List[TaxableEvent] = self._apply_fifo(df)
+        # Applica il FIFO sull'intero storico (cosi' i lotti gia' consumati negli
+        # anni precedenti non vengono riutilizzati), poi tiene solo le vendite
+        # effettivamente avvenute nell'anno selezionato.
+        eventi_storico: List[TaxableEvent] = self._apply_fifo(df_storico)
+        taxable_events = [
+            e for e in eventi_storico
+            if isinstance(e.date, datetime) and e.date.year == year
+        ]
 
-        # Calculate capital gains
-        capital_gain = sum(event.gain for event in taxable_events if event.gain > 0)
+        # Plusvalenze e minusvalenze si compensano nello stesso periodo d'imposta
+        # (Italia: art. 67 TUIR); il risultato negativo non genera imposta.
+        plusvalenze_lorde = sum(event.gain for event in taxable_events if event.gain > 0)
+        minusvalenze = sum(-event.gain for event in taxable_events if event.gain < 0)
+        capital_gain = max(plusvalenze_lorde - minusvalenze, 0.0)
 
         # Calculate capital gain tax (aliquota/franchigia in vigore per l'anno selezionato)
         rate, threshold = self._effective_rate_and_threshold(year)
@@ -205,17 +218,18 @@ class TaxCalculator:
             capital_gain_tax = capital_gain * rate
         else:
             capital_gain_tax = 0.0
-        
+
         # Calculate stamp duty (for Italy: EUR 2 per transaction over EUR 5.000)
         stamp_duty = 0.0
         if self.rule.stamp_duty > 0:
-            for _, row in df[df['Type'] == 'sell'].iterrows():
+            for _, row in df_anno[df_anno['Type'] == 'sell'].iterrows():
                 transaction_value = row['Amount'] * row['Price']
                 if transaction_value > self.rule.stamp_duty_threshold:
                     stamp_duty += self.rule.stamp_duty
-        
-        # Check if declaration is required (for Italy: portfolio > EUR 15.000)
-        portfolio_value = self._calculate_portfolio_value(df, year)
+
+        # Check if declaration is required (for Italy: portfolio > EUR 15.000);
+        # richiede lo storico completo, non solo le transazioni dell'anno.
+        portfolio_value = self._calculate_portfolio_value(df_storico, year)
         declaration_required = portfolio_value > self.rule.declaration_threshold
         
         # Prepare notes
@@ -227,19 +241,24 @@ class TaxCalculator:
                     f"{len(exempt_events)} transazioni esenti per detenzione > {self.rule.holding_period_exemption} anni."
                 )
         
+        if minusvalenze > 0:
+            notes.append(
+                f"Minusvalenze dell'anno compensate con le plusvalenze: €{minusvalenze:,.2f}."
+            )
+
         if capital_gain <= threshold:
             if threshold > 0:
                 notes.append(
-                    f"Plusvalenze sotto la franchigia annuale di €{threshold:,.2f} - Nessuna tassazione."
+                    f"Plusvalenze nette sotto la franchigia annuale di €{threshold:,.2f} - Nessuna tassazione."
                 )
         elif rate != self.rule.capital_gain_rate:
             notes.append(f"Aliquota applicata per il {year}: {rate * 100:.0f}%.")
-        
+
         if declaration_required:
             notes.append(
                 f"Dichiarazione RW obbligatoria (portafoglio > €{self.rule.declaration_threshold:,.2f})."
             )
-        
+
         return TaxCalculationResult(
             country=self.rule.country,
             year=year,
@@ -257,7 +276,7 @@ class TaxCalculator:
                     "gain": event.gain,
                     "holding_days": event.holding_days
                 }
-                for event in taxable_events if event.gain > 0
+                for event in sorted(taxable_events, key=lambda e: e.date)
             ],
             declaration_required=declaration_required,
             notes=notes,
