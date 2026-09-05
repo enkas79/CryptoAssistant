@@ -92,7 +92,8 @@ def main():
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
-    
+    app.setStyle("Fusion")
+
     try:
         # Load configuration
         config = load_config()
