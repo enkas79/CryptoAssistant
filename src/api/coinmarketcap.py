@@ -49,7 +49,8 @@ class CoinMarketCapAPI:
             if 'data' in response:
                 for symbol in symbols:
                     try:
-                        prices[symbol] = response['data'][symbol]['quote'][convert]['price']
+                        price = response['data'][symbol]['quote'][convert]['price']
+                        prices[symbol] = price if price is not None else 0
                     except KeyError:
                         prices[symbol] = 0
             else:

@@ -59,7 +59,8 @@ def calculate_portfolio_allocation(
             else:
                 total_invested += (row['Amount'] * price) + row['Fee']
 
-        current_value = quantity * live_prices.get(token, 0) * mult
+        live_price = live_prices.get(token, 0) or 0
+        current_value = quantity * live_price * mult
 
         if current_value > 0:
             values.append(current_value)
@@ -115,7 +116,7 @@ def calculate_token_stats(
     pmc = (total_invested / quantity_buys) if quantity_buys > 0 else 0
     
     mult = exchange_rate if currency == "EUR" else 1.0
-    current_value = quantity * live_price * mult
+    current_value = quantity * (live_price or 0) * mult
     
     return {
         'quantity': quantity,

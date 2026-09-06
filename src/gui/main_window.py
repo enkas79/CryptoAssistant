@@ -639,31 +639,20 @@ class TradingTerminalWindow(QMainWindow):
 
     def importa_files(self):
         """Import CSV files with transactions."""
-        def _log(msg):
-            print(f"[IMPORT DEBUG] {msg}", file=sys.stderr, flush=True)
-
         paths, _ = QFileDialog.getOpenFileNames(self, "Seleziona CSV", "", "CSV Files (*.csv)")
         if not paths:
             return
 
-        _log(f"1. File selezionati: {paths}")
         dfs = CSVImporter.import_from_csv(paths)
-        _log(f"2. Parsing completato, {len(dfs)} dataframe")
         if dfs:
             new_data = pd.concat(dfs)
-            _log(f"3. Concat completato, {len(new_data)} righe totali")
             rows_added = self.database.add_transactions(new_data)
-            _log(f"4. add_transactions completato, rows_added={rows_added}")
             self.df_master = self.database.get_dataframe()
-            _log("5. get_dataframe completato")
 
             if rows_added > 0:
                 self.aggiorna_menu_token()
-                _log("6. aggiorna_menu_token completato")
                 self.avvia_download_storico()
-                _log("7. avvia_download_storico completato")
                 QMessageBox.information(self, "Import", f"\u2705 Importazione completata! (+{rows_added})")
-                _log("8. QMessageBox mostrato, import terminato")
             else:
                 QMessageBox.information(self, "Import", "Nessun nuovo dato aggiunto.")
         else:
@@ -723,7 +712,6 @@ class TradingTerminalWindow(QMainWindow):
 
     def _su_prezzi_live_ricevuti(self, prices):
         """Handle live prices received from the background worker."""
-        print(f"[IMPORT DEBUG] A. Prezzi live ricevuti: {prices}", file=sys.stderr, flush=True)
         self.prezzi_live = prices
 
         # Update live exchange rate
@@ -731,9 +719,7 @@ class TradingTerminalWindow(QMainWindow):
             self.tasso_cambio_live = self.currency_converter.live_rate
             self.currency_converter.set_live_rate(self.tasso_cambio_live)
 
-        print("[IMPORT DEBUG] B. Chiamo aggiorna_vista da _su_prezzi_live_ricevuti", file=sys.stderr, flush=True)
         self.aggiorna_vista()
-        print("[IMPORT DEBUG] C. aggiorna_vista completata (da prezzi live)", file=sys.stderr, flush=True)
 
     def avvia_download_storico(self):
         """Start downloading historical exchange rates."""
@@ -754,13 +740,11 @@ class TradingTerminalWindow(QMainWindow):
 
     def salva_tassi_storici(self, rates):
         """Save historical exchange rates."""
-        print(f"[IMPORT DEBUG] N. salva_tassi_storici ricevuto, {len(rates)} date", file=sys.stderr, flush=True)
         self.tassi_storici = rates
         self.currency_converter.set_historical_rates(rates)
         self.tax_calculator.set_historical_rates(rates)
         self.progress_bar.setVisible(False)
         self.aggiorna_vista()
-        print("[IMPORT DEBUG] O. aggiorna_vista completata (da tassi storici)", file=sys.stderr, flush=True)
 
     def get_historical_rate(self, date_obj):
         """Get historical exchange rate for a specific date."""
@@ -768,7 +752,6 @@ class TradingTerminalWindow(QMainWindow):
 
     def aggiorna_vista(self):
         """Update the view based on current filters."""
-        print("[IMPORT DEBUG] D. Inizio aggiorna_vista", file=sys.stderr, flush=True)
         if self.df_master is None or self.df_master.empty:
             return
         
@@ -818,9 +801,7 @@ class TradingTerminalWindow(QMainWindow):
             self.dati_correnti['pmc'] = 0
 
             # Update chart (allocazione o andamento, in base a self.chart_mode)
-            print(f"[IMPORT DEBUG] E. Prima di figure.clear() - {len(values)} asset nel grafico", file=sys.stderr, flush=True)
             self.figure.clear()
-            print("[IMPORT DEBUG] F. figure.clear() completato", file=sys.stderr, flush=True)
 
             if self.chart_mode == 'andamento':
                 self.lbl_chart_title.setText("📈 ANDAMENTO CAPITALE INVESTITO")
@@ -844,28 +825,21 @@ class TradingTerminalWindow(QMainWindow):
                     else:
                         values_plot, labels_plot, colors_plot = values, labels, colors
 
-                    print(f"[IMPORT DEBUG] G. Prima di ax.pie() con {len(values_plot)} fette", file=sys.stderr, flush=True)
                     wedges, texts = ax.pie(values_plot, startangle=90, colors=colors_plot, wedgeprops=dict(width=0.45))
-                    print("[IMPORT DEBUG] H. ax.pie() completato", file=sys.stderr, flush=True)
                     legend_labels = []
                     total = sum(values_plot)
                     for i, l in enumerate(labels_plot):
                         val = values_plot[i]
                         perc = (val / total) * 100
                         legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb})")
-                    print("[IMPORT DEBUG] I. Prima di ax.legend()", file=sys.stderr, flush=True)
                     ax.legend(wedges, legend_labels, title="Asset", loc="center left",
                              bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
-                    print("[IMPORT DEBUG] J. ax.legend() completato", file=sys.stderr, flush=True)
                 else:
                     ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
                     ax.set_axis_off()
 
-            print("[IMPORT DEBUG] K. Prima di canvas.draw()", file=sys.stderr, flush=True)
             self.canvas.draw()
-            print("[IMPORT DEBUG] L. canvas.draw() completato", file=sys.stderr, flush=True)
             self.aggiorna_performance_globale(tot_investito, tot_valore, simb)
-            print("[IMPORT DEBUG] M. Fine ramo Generale di aggiorna_vista", file=sys.stderr, flush=True)
 
         # --- MODALITÀ SINGOLA MONETA ---
         else:
