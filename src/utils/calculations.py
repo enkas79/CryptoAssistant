@@ -13,7 +13,7 @@ def calculate_portfolio_allocation(
     exchange_rate: float,
     currency: str = "EUR",
     dust_threshold: float = 0.0
-) -> Tuple[list, list, list, list]:
+) -> Tuple[list, list, list, list, list]:
     """
     Calculate portfolio allocation for pie chart visualization.
 
@@ -26,9 +26,9 @@ def calculate_portfolio_allocation(
             soglia (nella valuta indicata) vengono esclusi dal risultato.
 
     Returns:
-        Tuple[list, list, list, list]: (values, labels, colors, invested) for pie chart.
-            invested contains the total cost basis (invested amount) for each token,
-            in the same order as values/labels/colors.
+        Tuple[list, list, list, list, list]: (values, labels, colors, invested, quantities)
+            for pie chart. invested contains the total cost basis (invested amount) for
+            each token, quantities the quantity held, in the same order as values/labels/colors.
     """
     from data.models import COIN_COLORS, FALLBACK_COLORS
 
@@ -36,6 +36,7 @@ def calculate_portfolio_allocation(
     labels = []
     colors = []
     invested = []
+    quantities = []
     fallback_idx = 0
 
     mult = exchange_rate if currency == "EUR" else 1.0
@@ -69,13 +70,14 @@ def calculate_portfolio_allocation(
             values.append(current_value)
             labels.append(token)
             invested.append(total_invested)
+            quantities.append(quantity)
             if token.upper() in COIN_COLORS:
                 colors.append(COIN_COLORS[token.upper()])
             else:
                 colors.append(FALLBACK_COLORS[fallback_idx % len(FALLBACK_COLORS)])
                 fallback_idx += 1
 
-    return values, labels, colors, invested
+    return values, labels, colors, invested, quantities
 
 
 def calculate_token_stats(

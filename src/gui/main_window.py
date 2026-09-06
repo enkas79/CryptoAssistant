@@ -36,6 +36,21 @@ def _leggi_versione() -> str:
     except OSError:
         return "sconosciuta"
 
+
+def _formatta_quantita(qta: float) -> str:
+    """Formatta una quantità di criptovaluta con una precisione leggibile
+    (più decimali per importi piccoli, es. frazioni di BTC; meno per
+    quantità grandi, es. migliaia di token), senza zeri finali superflui.
+    """
+    if qta >= 1000:
+        decimali = 2
+    elif qta >= 1:
+        decimali = 4
+    else:
+        decimali = 8
+    testo = f"{qta:,.{decimali}f}".rstrip('0').rstrip('.')
+    return testo if testo else "0"
+
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -48,6 +63,7 @@ from api.coinmarketcap import CoinMarketCapAPI, LivePricesWorker
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from utils.config import save_config
 from utils.currency import CurrencyConverter
+from utils.dates import parse_dates_safe
 from utils.calculations import (
     calculate_portfolio_allocation,
     calculate_token_stats,
@@ -792,7 +808,7 @@ class TradingTerminalWindow(QMainWindow):
         mult_live = self.tasso_cambio_live if self.valuta == "EUR" else 1.0
 
         df_lavoro = self.df_master.copy()
-        df_lavoro['Date (UTC+1:00)'] = pd.to_datetime(df_lavoro['Date (UTC+1:00)'], dayfirst=True, errors='coerce')
+        df_lavoro['Date (UTC+1:00)'] = parse_dates_safe(df_lavoro['Date (UTC+1:00)'])
         df_lavoro = df_lavoro.dropna(subset=['Date (UTC+1:00)'])
         
         if self.check_usa_filtro.isChecked():
@@ -820,7 +836,7 @@ class TradingTerminalWindow(QMainWindow):
                     else soglia_eur / self.tasso_cambio_live if self.tasso_cambio_live else soglia_eur
                 )
 
-            values, labels, colors, invested = calculate_portfolio_allocation(
+            values, labels, colors, invested, quantities = calculate_portfolio_allocation(
                 df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta,
                 dust_threshold=dust_threshold
             )
@@ -832,6 +848,7 @@ class TradingTerminalWindow(QMainWindow):
                 labels = [labels[i] for i in order]
                 colors = [colors[i] for i in order]
                 invested = [invested[i] for i in order]
+                quantities = [quantities[i] for i in order]
 
             tot_investito = sum(invested)
             tot_valore = sum(values)
@@ -863,8 +880,11 @@ class TradingTerminalWindow(QMainWindow):
                         values_plot = [values[i] for i in top_idx] + [sum(values[i] for i in altri_idx)]
                         labels_plot = [labels[i] for i in top_idx] + ["Altri"]
                         colors_plot = [colors[i] for i in top_idx] + ["#adb5bd"]
+                        # Nessuna quantità sensata per "Altri" (asset diversi aggregati)
+                        quantities_plot = [quantities[i] for i in top_idx] + [None]
                     else:
                         values_plot, labels_plot, colors_plot = values, labels, colors
+                        quantities_plot = quantities
 
                     wedges, texts = ax.pie(values_plot, startangle=90, colors=colors_plot, wedgeprops=dict(width=0.45))
                     legend_labels = []
@@ -872,7 +892,9 @@ class TradingTerminalWindow(QMainWindow):
                     for i, l in enumerate(labels_plot):
                         val = values_plot[i]
                         perc = (val / total) * 100
-                        legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb})")
+                        qta = quantities_plot[i]
+                        qta_str = f", {_formatta_quantita(qta)} {l}" if qta is not None else ""
+                        legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb}{qta_str})")
                     ax.legend(wedges, legend_labels, title="Asset", loc="center left",
                              bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
                 else:

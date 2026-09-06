@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional
 from .models import Transaction, CurrentData
+from utils.dates import parse_dates_safe
 
 
 class TransactionDatabase:
@@ -62,7 +63,7 @@ class TransactionDatabase:
         if 'Price' not in df.columns:
             df['Price'] = 0.0
         if 'Date (UTC+1:00)' in df.columns:
-            df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], dayfirst=True, errors='coerce')
+            df['Date (UTC+1:00)'] = parse_dates_safe(df['Date (UTC+1:00)'])
         if 'Original Currency' not in df.columns:
             df['Original Currency'] = 'EUR'
         if 'Notes' not in df.columns:
