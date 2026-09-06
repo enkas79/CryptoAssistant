@@ -4,8 +4,6 @@ A tool for managing cryptocurrency portfolios with fiscal reporting.
 """
 
 import sys
-import os
-import json
 import warnings
 from pathlib import Path
 
@@ -22,46 +20,12 @@ from api.coinmarketcap import CoinMarketCapAPI
 from data.database import TransactionDatabase
 from data.importer import CSVImporter
 from gui.main_window import TradingTerminalWindow
+from utils.config import get_user_data_dir, load_config, save_config
 
 
 def get_project_root() -> Path:
     """Get the project root directory (usata solo per risorse di sola lettura, es. version.txt)."""
     return Path(__file__).parent.parent
-
-
-def get_user_data_dir() -> Path:
-    """
-    Restituisce una cartella scrivibile per l'utente corrente, dove salvare
-    configurazione e dati. Necessaria perché quando l'app è installata in
-    'C:\\Program Files\\...' la cartella di installazione non è scrivibile
-    senza permessi di amministratore (causa PermissionError/WinError 5).
-    """
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA") or str(Path.home())
-    else:
-        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    data_dir = Path(base) / "CryptoAssistant"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir
-
-
-def load_config() -> dict:
-    """Load configuration from the user data directory."""
-    config_path = get_user_data_dir() / "config.json"
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
-    return {"api_key": None, "default_currency": "EUR"}
-
-
-def save_config(config: dict) -> None:
-    """Save configuration to the user data directory."""
-    config_path = get_user_data_dir() / "config.json"
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=4)
 
 
 def get_api_key_from_user() -> str:

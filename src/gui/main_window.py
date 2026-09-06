@@ -46,6 +46,7 @@ from data.models import COIN_COLORS, FALLBACK_COLORS
 from data.tax_rules import TaxRulesManager
 from api.coinmarketcap import CoinMarketCapAPI, LivePricesWorker
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
+from utils.config import save_config
 from utils.currency import CurrencyConverter
 from utils.calculations import (
     calculate_portfolio_allocation,
@@ -429,7 +430,19 @@ class TradingTerminalWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
     def _crea_menu_bar(self):
-        """Crea la barra dei menu con il menu 'Aiuto' (Informazioni, Guida)."""
+        """Crea la barra dei menu con i menu 'Impostazioni' e 'Aiuto'."""
+        menu_impostazioni = self.menuBar().addMenu("&Impostazioni")
+
+        self.azione_dust_attivo = QAction("Nascondi asset sotto soglia (dust)", self)
+        self.azione_dust_attivo.setCheckable(True)
+        self.azione_dust_attivo.setChecked(self.config.get('dust_filter_enabled', True))
+        self.azione_dust_attivo.toggled.connect(self._on_dust_filter_toggled)
+        menu_impostazioni.addAction(self.azione_dust_attivo)
+
+        azione_soglia_dust = QAction("Imposta soglia dust...", self)
+        azione_soglia_dust.triggered.connect(self._imposta_soglia_dust)
+        menu_impostazioni.addAction(azione_soglia_dust)
+
         menu_aiuto = self.menuBar().addMenu("&Aiuto")
 
         azione_info = QAction("Informazioni", self)
@@ -468,6 +481,25 @@ class TradingTerminalWindow(QMainWindow):
             "4. Genera il report fiscale PDF dal pulsante dedicato.<br>"
             "5. Salva le modifiche con '💾 Salva'."
         )
+
+    def _on_dust_filter_toggled(self, attivo: bool):
+        """Attiva/disattiva il filtro dust e salva la preferenza."""
+        self.config['dust_filter_enabled'] = attivo
+        save_config(self.config)
+        self.aggiorna_vista()
+
+    def _imposta_soglia_dust(self):
+        """Chiede all'utente la soglia (in EUR) sotto cui un asset è considerato dust."""
+        soglia_attuale = self.config.get('dust_threshold', 1.0)
+        nuova_soglia, ok = QInputDialog.getDouble(
+            self, "Soglia Dust",
+            "Nascondi gli asset con valore inferiore a (€):",
+            soglia_attuale, 0.0, 100000.0, 2
+        )
+        if ok:
+            self.config['dust_threshold'] = nuova_soglia
+            save_config(self.config)
+            self.aggiorna_vista()
 
     # --- Autoupdate ---
 
@@ -780,8 +812,17 @@ class TradingTerminalWindow(QMainWindow):
             self.label_live_price.setText("Globale")
 
             # Calculate portfolio allocation
+            dust_threshold = 0.0
+            if self.config.get('dust_filter_enabled', True):
+                soglia_eur = self.config.get('dust_threshold', 1.0)
+                dust_threshold = (
+                    soglia_eur if self.valuta == "EUR"
+                    else soglia_eur / self.tasso_cambio_live if self.tasso_cambio_live else soglia_eur
+                )
+
             values, labels, colors, invested = calculate_portfolio_allocation(
-                df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta
+                df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta,
+                dust_threshold=dust_threshold
             )
 
             # Order by allocation percentage (descending)

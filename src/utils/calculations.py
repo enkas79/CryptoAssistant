@@ -11,7 +11,8 @@ def calculate_portfolio_allocation(
     df: pd.DataFrame,
     live_prices: Dict[str, float],
     exchange_rate: float,
-    currency: str = "EUR"
+    currency: str = "EUR",
+    dust_threshold: float = 0.0
 ) -> Tuple[list, list, list, list]:
     """
     Calculate portfolio allocation for pie chart visualization.
@@ -21,6 +22,8 @@ def calculate_portfolio_allocation(
         live_prices (Dict[str, float]): Current prices for each token.
         exchange_rate (float): Exchange rate (USD to EUR if currency is EUR).
         currency (str): Target currency (EUR or USD).
+        dust_threshold (float): Asset con valore corrente inferiore a questa
+            soglia (nella valuta indicata) vengono esclusi dal risultato.
 
     Returns:
         Tuple[list, list, list, list]: (values, labels, colors, invested) for pie chart.
@@ -62,7 +65,7 @@ def calculate_portfolio_allocation(
         live_price = live_prices.get(token, 0) or 0
         current_value = quantity * live_price * mult
 
-        if current_value > 0:
+        if current_value > 0 and current_value >= dust_threshold:
             values.append(current_value)
             labels.append(token)
             invested.append(total_invested)
