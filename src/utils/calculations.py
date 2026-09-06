@@ -7,6 +7,56 @@ import pandas as pd
 from typing import Dict, Tuple
 
 
+def _cost_basis_and_quantity(
+    df_token: pd.DataFrame,
+    exchange_rate: float,
+    currency: str = "EUR"
+) -> Tuple[float, float]:
+    """
+    Calcola quantità detenuta e relativo costo base (PMC) con il metodo del
+    costo medio ponderato, processando le transazioni in ordine cronologico:
+    un acquisto aumenta quantità e costo, una vendita riduce entrambi in
+    proporzione (al costo medio del momento), invece di sommare il costo di
+    TUTTI gli acquisti storici anche per la parte poi rivenduta (il che
+    gonfierebbe l'importo investito e falserebbe il calcolo di performance).
+
+    Args:
+        df_token (pd.DataFrame): Transazioni di un singolo token.
+        exchange_rate (float): Tasso di cambio USD->EUR.
+        currency (str): Valuta di destinazione (EUR o USD).
+
+    Returns:
+        Tuple[float, float]: (quantità detenuta, costo base della quantità detenuta).
+    """
+    df_sorted = df_token
+    if 'Date (UTC+1:00)' in df_token.columns:
+        df_sorted = df_token.sort_values('Date (UTC+1:00)', kind='stable')
+
+    quantity = 0.0
+    cost_basis = 0.0
+
+    for _, row in df_sorted.iterrows():
+        amount = row['Amount']
+        tx_type = str(row['Type']).lower()
+
+        if tx_type == 'buy':
+            price = row['Price']
+            orig_curr = str(row.get('Original Currency', 'EUR'))
+            if currency == "EUR" and orig_curr == "USD":
+                cost_row = (amount * price * exchange_rate) + (row['Fee'] * exchange_rate)
+            else:
+                cost_row = (amount * price) + row['Fee']
+            quantity += amount
+            cost_basis += cost_row
+        elif tx_type == 'sell':
+            if quantity > 0:
+                avg_cost = cost_basis / quantity
+                cost_basis -= avg_cost * min(amount, quantity)
+            quantity -= amount
+
+    return max(quantity, 0.0), max(cost_basis, 0.0)
+
+
 def calculate_portfolio_allocation(
     df: pd.DataFrame,
     live_prices: Dict[str, float],
@@ -43,25 +93,10 @@ def calculate_portfolio_allocation(
 
     for token in df['Token'].unique():
         sub = df[df['Token'] == token]
-        buys = sub[sub['Type'] == 'buy']
-        sells = sub[sub['Type'] == 'sell']
 
-        quantity = buys['Amount'].sum() - sells['Amount'].sum()
+        quantity, total_invested = _cost_basis_and_quantity(sub, exchange_rate, currency)
         if quantity <= 0.000001:
             continue
-
-        # Calculate total invested (with currency conversion)
-        total_invested = 0.0
-        for _, row in buys.iterrows():
-            price = row['Price']
-            orig_curr = str(row.get('Original Currency', 'EUR'))
-
-            if currency == "EUR" and orig_curr == "USD":
-                # Convert from USD to EUR using historical rate (simplified here)
-                # In the full app, this would use the historical rate for the transaction date
-                total_invested += (row['Amount'] * price * exchange_rate) + (row['Fee'] * exchange_rate)
-            else:
-                total_invested += (row['Amount'] * price) + row['Fee']
 
         live_price = live_prices.get(token, 0) or 0
         current_value = quantity * live_price * mult
@@ -101,24 +136,10 @@ def calculate_token_stats(
         Dict[str, float]: Dictionary with statistics (quantity, pmc, invested, current_value).
     """
     df_token = df[df['Token'] == token]
-    buys = df_token[df_token['Type'] == 'buy']
-    sells = df_token[df_token['Type'] == 'sell']
-    
-    quantity = buys['Amount'].sum() - sells['Amount'].sum()
-    quantity_buys = buys['Amount'].sum()
-    
-    # Calculate total invested (with currency conversion)
-    total_invested = 0.0
-    for _, row in buys.iterrows():
-        price = row['Price']
-        orig_curr = str(row.get('Original Currency', 'EUR'))
-        
-        if currency == "EUR" and orig_curr == "USD":
-            total_invested += (row['Amount'] * price * exchange_rate) + (row['Fee'] * exchange_rate)
-        else:
-            total_invested += (row['Amount'] * price) + row['Fee']
-    
-    pmc = (total_invested / quantity_buys) if quantity_buys > 0 else 0
+
+    quantity, total_invested = _cost_basis_and_quantity(df_token, exchange_rate, currency)
+
+    pmc = (total_invested / quantity) if quantity > 0 else 0
     
     mult = exchange_rate if currency == "EUR" else 1.0
     current_value = quantity * (live_price or 0) * mult

@@ -37,20 +37,6 @@ def _leggi_versione() -> str:
         return "sconosciuta"
 
 
-def _formatta_quantita(qta: float) -> str:
-    """Formatta una quantità di criptovaluta con una precisione leggibile
-    (più decimali per importi piccoli, es. frazioni di BTC; meno per
-    quantità grandi, es. migliaia di token), senza zeri finali superflui.
-    """
-    if qta >= 1000:
-        decimali = 2
-    elif qta >= 1:
-        decimali = 4
-    else:
-        decimali = 8
-    testo = f"{qta:,.{decimali}f}".rstrip('0').rstrip('.')
-    return testo if testo else "0"
-
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -893,8 +879,8 @@ class TradingTerminalWindow(QMainWindow):
                         val = values_plot[i]
                         perc = (val / total) * 100
                         qta = quantities_plot[i]
-                        qta_str = f", {_formatta_quantita(qta)} {l}" if qta is not None else ""
-                        legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb}{qta_str})")
+                        qta_str = f"{qta:,.3f} " if qta is not None else ""
+                        legend_labels.append(f"{qta_str}{l}: {perc:.1f}% ({val:,.0f}{simb})")
                     ax.legend(wedges, legend_labels, title="Asset", loc="center left",
                              bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
                 else:
@@ -911,7 +897,6 @@ class TradingTerminalWindow(QMainWindow):
             df_t = df_filtrato[df_filtrato['Token'] == selection]
 
             self.tabella.setRowCount(0)
-            investito_singolo = 0
 
             for _, row in df_t.iterrows():
                 r = self.tabella.rowCount()
@@ -925,9 +910,6 @@ class TradingTerminalWindow(QMainWindow):
                 
                 prezzo_storico = row['Price'] * factor
                 val_tot_storico = row['Amount'] * prezzo_storico
-                
-                if str(row['Type']).lower() == 'buy':
-                    investito_singolo += val_tot_storico + (row['Fee'] * factor)
 
                 try:
                     data_fmt = row['Date (UTC+1:00)'].strftime("%d/%m/%Y")
