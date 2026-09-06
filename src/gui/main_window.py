@@ -672,6 +672,7 @@ class TradingTerminalWindow(QMainWindow):
 
         self.database.clear_all()
         self.df_master = None
+        self.prezzi_live = {}
         self.tabella.setRowCount(0)
         self.label_total_netto.setText("---")
         self.label_live_price.setText("---")
@@ -679,6 +680,11 @@ class TradingTerminalWindow(QMainWindow):
         self.label_pmc.setText("PMC: ---")
         self.label_invest_perf.setText("---")
         self.label_val_att_perf.setText("---")
+
+        # Pulisce anche il grafico (aggiorna_vista esce subito se df_master è vuoto)
+        self.figure.clear()
+        self.canvas.draw()
+
         self.aggiorna_menu_token()
         QMessageBox.information(self, "Reset Database", "✅ Database svuotato. Puoi importare nuovi file CSV.")
 
