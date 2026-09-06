@@ -832,7 +832,7 @@ class TradingTerminalWindow(QMainWindow):
 
             values, labels, colors, invested, quantities = calculate_portfolio_allocation(
                 df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta,
-                dust_threshold=dust_threshold
+                dust_threshold=dust_threshold, rate_for_date=self.get_historical_rate
             )
 
             # Order by allocation percentage (descending)
@@ -980,7 +980,7 @@ class TradingTerminalWindow(QMainWindow):
             # Calculate token stats
             stats = calculate_token_stats(
                 df_filtrato, selection, self.prezzi_live.get(selection, 0),
-                self.tasso_cambio_live, self.valuta
+                self.tasso_cambio_live, self.valuta, rate_for_date=self.get_historical_rate
             )
             
             qta_tot = stats['quantity']
@@ -1009,7 +1009,9 @@ class TradingTerminalWindow(QMainWindow):
         richiederebbe prezzi storici per singolo asset non disponibili con
         un piano CoinMarketCap gratuito.
         """
-        dates, values = calculate_invested_over_time(df, self.tasso_cambio_live, self.valuta)
+        dates, values = calculate_invested_over_time(
+            df, self.tasso_cambio_live, self.valuta, rate_for_date=self.get_historical_rate
+        )
 
         ax = self.figure.add_axes([0.12, 0.18, 0.85, 0.72])
         if dates:
@@ -1077,7 +1079,7 @@ class TradingTerminalWindow(QMainWindow):
         simb = "€" if self.valuta == "EUR" else "$"
         stats = calculate_token_stats(
             self.df_master, token, self.prezzi_live.get(token, 0),
-            self.tasso_cambio_live, self.valuta
+            self.tasso_cambio_live, self.valuta, rate_for_date=self.get_historical_rate
         )
         perc, diff = calculate_performance(stats['invested'], stats['current_value'])
         colore = "#28a745" if perc >= 0 else "#dc3545"

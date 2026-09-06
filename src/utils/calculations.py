@@ -4,13 +4,26 @@ Handles all financial calculations (PMC, performance, target calculations).
 """
 
 import pandas as pd
-from typing import Dict, Tuple
+from typing import Callable, Dict, Optional, Tuple
+
+
+def _rate_for_row(row, exchange_rate: float, rate_for_date: Optional[Callable] = None) -> float:
+    """Tasso USD->EUR da usare per una riga: quello storico alla data della
+    transazione se è disponibile un lookup, altrimenti quello (odierno)
+    passato come fallback."""
+    if rate_for_date is not None:
+        try:
+            return rate_for_date(row['Date (UTC+1:00)'])
+        except Exception:
+            pass
+    return exchange_rate
 
 
 def _cost_basis_and_quantity(
     df_token: pd.DataFrame,
     exchange_rate: float,
-    currency: str = "EUR"
+    currency: str = "EUR",
+    rate_for_date: Optional[Callable] = None
 ) -> Tuple[float, float]:
     """
     Calcola quantità detenuta e relativo costo base (PMC) con il metodo del
@@ -22,8 +35,14 @@ def _cost_basis_and_quantity(
 
     Args:
         df_token (pd.DataFrame): Transazioni di un singolo token.
-        exchange_rate (float): Tasso di cambio USD->EUR.
+        exchange_rate (float): Tasso di cambio USD->EUR odierno, usato come
+            fallback quando rate_for_date non è fornito o non ha un valore
+            per la data della transazione.
         currency (str): Valuta di destinazione (EUR o USD).
+        rate_for_date (Optional[Callable]): Funzione data->tasso storico
+            USD->EUR. Fondamentale per acquisti in USD di anni fa: usare il
+            tasso odierno per convertirli falsa pesantemente il costo base
+            (e quindi la performance) quando il cambio si è mosso molto.
 
     Returns:
         Tuple[float, float]: (quantità detenuta, costo base della quantità detenuta).
@@ -43,7 +62,8 @@ def _cost_basis_and_quantity(
             price = row['Price']
             orig_curr = str(row.get('Original Currency', 'EUR'))
             if currency == "EUR" and orig_curr == "USD":
-                cost_row = (amount * price * exchange_rate) + (row['Fee'] * exchange_rate)
+                rate = _rate_for_row(row, exchange_rate, rate_for_date)
+                cost_row = (amount * price * rate) + (row['Fee'] * rate)
             else:
                 cost_row = (amount * price) + row['Fee']
             quantity += amount
@@ -62,7 +82,8 @@ def calculate_portfolio_allocation(
     live_prices: Dict[str, float],
     exchange_rate: float,
     currency: str = "EUR",
-    dust_threshold: float = 0.0
+    dust_threshold: float = 0.0,
+    rate_for_date: Optional[Callable] = None
 ) -> Tuple[list, list, list, list, list]:
     """
     Calculate portfolio allocation for pie chart visualization.
@@ -74,6 +95,9 @@ def calculate_portfolio_allocation(
         currency (str): Target currency (EUR or USD).
         dust_threshold (float): Asset con valore corrente inferiore a questa
             soglia (nella valuta indicata) vengono esclusi dal risultato.
+        rate_for_date (Optional[Callable]): Funzione data->tasso storico
+            USD->EUR per il costo base degli acquisti in USD (vedi
+            _cost_basis_and_quantity).
 
     Returns:
         Tuple[list, list, list, list, list]: (values, labels, colors, invested, quantities)
@@ -94,7 +118,7 @@ def calculate_portfolio_allocation(
     for token in df['Token'].unique():
         sub = df[df['Token'] == token]
 
-        quantity, total_invested = _cost_basis_and_quantity(sub, exchange_rate, currency)
+        quantity, total_invested = _cost_basis_and_quantity(sub, exchange_rate, currency, rate_for_date)
         if quantity <= 0.000001:
             continue
 
@@ -120,24 +144,27 @@ def calculate_token_stats(
     token: str,
     live_price: float,
     exchange_rate: float,
-    currency: str = "EUR"
+    currency: str = "EUR",
+    rate_for_date: Optional[Callable] = None
 ) -> Dict[str, float]:
     """
     Calculate statistics for a single token.
-    
+
     Args:
         df (pd.DataFrame): DataFrame with transactions.
         token (str): Token symbol.
         live_price (float): Current price of the token.
         exchange_rate (float): Exchange rate (USD to EUR if currency is EUR).
         currency (str): Target currency (EUR or USD).
-    
+        rate_for_date (Optional[Callable]): Funzione data->tasso storico
+            USD->EUR per il costo base degli acquisti in USD.
+
     Returns:
         Dict[str, float]: Dictionary with statistics (quantity, pmc, invested, current_value).
     """
     df_token = df[df['Token'] == token]
 
-    quantity, total_invested = _cost_basis_and_quantity(df_token, exchange_rate, currency)
+    quantity, total_invested = _cost_basis_and_quantity(df_token, exchange_rate, currency, rate_for_date)
 
     pmc = (total_invested / quantity) if quantity > 0 else 0
     
@@ -187,7 +214,8 @@ def calculate_target_quantity(
 def calculate_invested_over_time(
     df: pd.DataFrame,
     exchange_rate: float,
-    currency: str = "EUR"
+    currency: str = "EUR",
+    rate_for_date: Optional[Callable] = None
 ) -> Tuple[list, list]:
     """
     Calculate the cumulative net invested capital over time (running total of
@@ -201,6 +229,8 @@ def calculate_invested_over_time(
         df (pd.DataFrame): DataFrame with transactions (must include 'Date (UTC+1:00)').
         exchange_rate (float): Exchange rate (USD to EUR if currency is EUR).
         currency (str): Target currency (EUR or USD).
+        rate_for_date (Optional[Callable]): Funzione data->tasso storico
+            USD->EUR per il costo base degli acquisti in USD.
 
     Returns:
         Tuple[list, list]: (dates, cumulative_invested) sorted chronologically,
@@ -215,7 +245,8 @@ def calculate_invested_over_time(
         orig_curr = str(row.get('Original Currency', 'EUR'))
 
         if currency == "EUR" and orig_curr == "USD":
-            value = (row['Amount'] * price * exchange_rate) + (row['Fee'] * exchange_rate)
+            rate = _rate_for_row(row, exchange_rate, rate_for_date)
+            value = (row['Amount'] * price * rate) + (row['Fee'] * rate)
         else:
             value = (row['Amount'] * price) + row['Fee']
 
