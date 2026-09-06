@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFileDialog,
     QComboBox, QFrame, QGroupBox, QGridLayout, QInputDialog, QDateEdit,
     QCheckBox, QStackedWidget, QProgressBar, QApplication, QScrollArea,
-    QMainWindow
+    QMainWindow, QDialog
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QAction
@@ -291,7 +291,15 @@ class TradingTerminalWindow(QMainWindow):
         self.figure = Figure(figsize=(8, 5), dpi=100)
         self.canvas = FigureCanvas(self.figure)
         self.chart_layout.addWidget(self.canvas)
-        
+
+        # Interazione con la legenda della torta (hover/click), impostata una
+        # sola volta: aggiorna_vista si limita a ripopolare questi riferimenti.
+        self._pie_wedges = []
+        self._pie_tokens = []
+        self._pie_hover_idx = None
+        self.canvas.mpl_connect('motion_notify_event', self._on_pie_legend_hover)
+        self.canvas.mpl_connect('button_press_event', self._on_pie_legend_click)
+
         self.stack_visualizzazione.addWidget(self.chart_view)
         
         layout_corpo.addWidget(self.stack_visualizzazione, stretch=1)
@@ -850,6 +858,8 @@ class TradingTerminalWindow(QMainWindow):
             if self.chart_mode == 'andamento':
                 self.lbl_chart_title.setText("📈 ANDAMENTO CAPITALE INVESTITO")
                 self._disegna_andamento(df_filtrato, simb)
+                self._pie_wedges = []
+                self._pie_tokens = []
             else:
                 self.lbl_chart_title.setText("📊 ALLOCAZIONE PORTAFOGLIO")
                 ax = self.figure.add_axes([0.4, 0.0, 0.6, 1.0])
@@ -873,19 +883,43 @@ class TradingTerminalWindow(QMainWindow):
                         quantities_plot = quantities
 
                     wedges, texts = ax.pie(values_plot, startangle=90, colors=colors_plot, wedgeprops=dict(width=0.45))
-                    legend_labels = []
+
+                    # Colonne allineate: calcola la larghezza massima di ogni campo
+                    # e le formatta con font monospace, cosi le cifre si incolonnano.
                     total = sum(values_plot)
+                    qta_strs, perc_strs, val_strs = [], [], []
                     for i, l in enumerate(labels_plot):
                         val = values_plot[i]
                         perc = (val / total) * 100
                         qta = quantities_plot[i]
-                        qta_str = f"{qta:,.3f} " if qta is not None else ""
-                        legend_labels.append(f"{qta_str}{l}: {perc:.1f}% ({val:,.0f}{simb})")
-                    ax.legend(wedges, legend_labels, title="Asset", loc="center left",
-                             bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False)
+                        qta_strs.append(f"{qta:,.3f}" if qta is not None else "")
+                        perc_strs.append(f"{perc:.1f}%")
+                        val_strs.append(f"{val:,.0f}{simb}")
+
+                    w_qta = max(len(s) for s in qta_strs)
+                    w_label = max(len(s) for s in labels_plot)
+                    w_perc = max(len(s) for s in perc_strs)
+                    w_val = max(len(s) for s in val_strs)
+
+                    legend_labels = [
+                        f"{qta_strs[i]:>{w_qta}} {l:<{w_label}} {perc_strs[i]:>{w_perc}} ({val_strs[i]:>{w_val}})"
+                        for i, l in enumerate(labels_plot)
+                    ]
+                    legend = ax.legend(
+                        wedges, legend_labels, title="Asset", loc="center left",
+                        bbox_to_anchor=(-0.6, 0.5), fontsize=10, frameon=False,
+                        prop={'family': 'monospace'}
+                    )
+
+                    self._pie_wedges = wedges
+                    self._pie_tokens = labels_plot
+                    self._pie_legend = legend
+                    self._pie_hover_idx = None
                 else:
                     ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
                     ax.set_axis_off()
+                    self._pie_wedges = []
+                    self._pie_tokens = []
 
             self.canvas.draw()
             self.aggiorna_performance_globale(tot_investito, tot_valore, simb)
@@ -987,6 +1021,125 @@ class TradingTerminalWindow(QMainWindow):
         else:
             ax.text(0.5, 0.5, "Dati insufficienti", ha='center', va='center')
             ax.set_axis_off()
+
+    def _indice_legenda_sotto_mouse(self, event) -> Optional[int]:
+        """Restituisce l'indice della voce di legenda della torta sotto il
+        cursore (testo o riquadro colore), o None se il mouse non è su
+        nessuna voce."""
+        legend = getattr(self, '_pie_legend', None)
+        if legend is None or not self._pie_tokens:
+            return None
+        for idx, (handle, text) in enumerate(zip(legend.legend_handles, legend.get_texts())):
+            contains_handle, _ = handle.contains(event)
+            contains_text, _ = text.contains(event)
+            if contains_handle or contains_text:
+                return idx
+        return None
+
+    def _on_pie_legend_hover(self, event):
+        """Evidenzia la fetta della torta corrispondente alla voce di
+        legenda sotto il mouse."""
+        if not self._pie_wedges:
+            return
+        idx = self._indice_legenda_sotto_mouse(event)
+        if idx == self._pie_hover_idx:
+            return
+        self._pie_hover_idx = idx
+        for i, wedge in enumerate(self._pie_wedges):
+            if i == idx:
+                wedge.set_edgecolor('#333333')
+                wedge.set_linewidth(3)
+            else:
+                wedge.set_edgecolor('white')
+                wedge.set_linewidth(1)
+        self.canvas.draw_idle()
+
+    def _on_pie_legend_click(self, event):
+        """Al click su una voce di legenda, apre il riepilogo dell'asset."""
+        if not self._pie_tokens:
+            return
+        idx = self._indice_legenda_sotto_mouse(event)
+        if idx is None:
+            return
+        token = self._pie_tokens[idx]
+        if token == "Altri":
+            QMessageBox.information(
+                self, "Altri asset",
+                "Questa fetta raggruppa gli asset più piccoli del portafoglio.\n"
+                "Seleziona il singolo asset dal menu a tendina 'Asset' per vederne il dettaglio."
+            )
+            return
+        self._mostra_riepilogo_asset(token)
+
+    def _mostra_riepilogo_asset(self, token: str):
+        """Mostra una finestra con il riepilogo delle performance di un
+        singolo asset, con la possibilità di stamparlo/esportarlo in PDF."""
+        simb = "€" if self.valuta == "EUR" else "$"
+        stats = calculate_token_stats(
+            self.df_master, token, self.prezzi_live.get(token, 0),
+            self.tasso_cambio_live, self.valuta
+        )
+        perc, diff = calculate_performance(stats['invested'], stats['current_value'])
+        colore = "#28a745" if perc >= 0 else "#dc3545"
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Riepilogo {token}")
+        dialog.setMinimumWidth(360)
+        layout = QVBoxLayout(dialog)
+
+        titolo = QLabel(f"📊 {token}")
+        titolo.setStyleSheet("font-size: 20px; font-weight: bold;")
+        layout.addWidget(titolo)
+
+        griglia = QGridLayout()
+        righe = [
+            ("Quantità posseduta:", f"{stats['quantity']:,.6f} {token}"),
+            ("PMC (prezzo medio):", f"{stats['pmc']:,.4f} {simb}"),
+            ("Investito:", f"{stats['invested']:,.2f} {simb}"),
+            ("Valore attuale:", f"{stats['current_value']:,.2f} {simb}"),
+        ]
+        for r, (etichetta, valore) in enumerate(righe):
+            griglia.addWidget(QLabel(etichetta), r, 0)
+            lbl_valore = QLabel(valore)
+            lbl_valore.setStyleSheet("font-weight: bold;")
+            griglia.addWidget(lbl_valore, r, 1)
+        layout.addLayout(griglia)
+
+        lbl_perf = QLabel(f"Performance: {perc:+.2f}% ({diff:+,.2f} {simb})")
+        lbl_perf.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {colore}; margin-top: 10px;")
+        layout.addWidget(lbl_perf)
+
+        pulsanti = QHBoxLayout()
+        btn_stampa = QPushButton("🖨 Stampa / Esporta PDF")
+        btn_stampa.clicked.connect(lambda: self._stampa_riepilogo_asset(token))
+        btn_chiudi = QPushButton("Chiudi")
+        btn_chiudi.clicked.connect(dialog.accept)
+        pulsanti.addWidget(btn_stampa)
+        pulsanti.addWidget(btn_chiudi)
+        layout.addLayout(pulsanti)
+
+        dialog.exec()
+
+    def _stampa_riepilogo_asset(self, token: str):
+        """Genera un PDF con il solo estratto conto dell'asset selezionato."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Salva Riepilogo", f"Riepilogo_{token}.pdf", "PDF (*.pdf)"
+        )
+        if not path:
+            return
+
+        df_token = self.df_master[self.df_master['Token'] == token]
+        generator = FiscalReportGenerator(
+            live_prices=self.prezzi_live,
+            exchange_rate=self.tasso_cambio_live,
+            currency=self.valuta
+        )
+        successo = generator.generate_report(df_token, path)
+
+        if successo:
+            QMessageBox.information(self, "Riepilogo", "PDF generato con successo!")
+        else:
+            QMessageBox.critical(self, "Errore PDF", "Errore nella generazione del riepilogo.")
 
     def aggiorna_performance_globale(self, investito, valore_attuale, simb):
         """Update performance display."""
