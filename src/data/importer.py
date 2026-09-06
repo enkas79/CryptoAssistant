@@ -121,11 +121,11 @@ class CSVImporter:
 
         return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
 
-    # Tipi che duplicano un'altra riga dello stesso evento (lato "exchange"
-    # interno di Nexo): stessa data, stesso importo, stesso controvalore USD
-    # della riga lato wallet già generata da un altro Type. Vanno scartati
-    # per non contare due volte la stessa conversione.
-    NEXO_DUPLICATE_TYPES = {'Exchange Deposited On', 'Manual Sell Order'}
+    # Type che duplica un'altra riga di conversione dello stesso evento
+    # (lato "exchange" interno di Nexo): stessa data, stessa valuta, stesso
+    # controvalore USD della riga già generata da 'Deposit To Exchange'.
+    # Va scartato per non contare due volte la stessa conversione.
+    NEXO_DUPLICATE_TYPES = {'Exchange Deposited On'}
 
     @classmethod
     def _parse_nexo(cls, df: pd.DataFrame) -> pd.DataFrame:
@@ -138,11 +138,31 @@ class CSVImporter:
         conversioni, es. Exchange) genera due righe (sell + buy), come per
         Crypto.com. Il valore arriva da 'USD Equivalent'.
 
-        Alcuni Type ('Exchange Deposited On', 'Manual Sell Order') sono la
-        seconda riga generata da Nexo per lo stesso evento già registrato
-        rispettivamente da 'Deposit To Exchange' e 'Exchange Liquidation':
-        vengono scartati per evitare di contare due volte la stessa conversione.
+        Nexo registra alcuni eventi (prestiti istantanei convertiti,
+        liquidazioni, prelievi) sia come vera conversione sia come riga
+        "eco" nella stessa valuta (Input Currency == Output Currency, es.
+        'Manual Sell Order', 'Loan Withdrawal', 'Withdraw Exchanged', o un
+        secondo 'Top up Crypto' per lo stesso importo): una riga di questo
+        tipo viene scartata se un'altra riga, nello stesso minuto e con lo
+        stesso controvalore USD, rappresenta già una vera conversione
+        (valuta diversa) che coinvolge la stessa valuta. 'Exchange Deposited
+        On' duplica invece una conversione già generata da 'Deposit To
+        Exchange' e viene scartata per Type.
         """
+        conversion_signatures = set()
+        for _, row in df.iterrows():
+            tx_kind = str(row.get('Type', '') or '')
+            if tx_kind in cls.NEXO_DUPLICATE_TYPES:
+                continue
+            in_tok = str(row.get('Input Currency', '') or '').strip()
+            out_tok = str(row.get('Output Currency', '') or '').strip()
+            if out_tok in ('', '-') or out_tok == in_tok:
+                continue
+            date_str = str(row.get('Date / Time (UTC)', ''))[:16]  # arrotonda al minuto
+            usd_str = str(row.get('USD Equivalent', ''))
+            conversion_signatures.add((date_str, in_tok, usd_str))
+            conversion_signatures.add((date_str, out_tok, usd_str))
+
         rows = []
         for _, row in df.iterrows():
             tx_kind = str(row.get('Type', '') or '')
@@ -157,6 +177,13 @@ class CSVImporter:
             out_token = str(row.get('Output Currency', '') or '').strip()
             if out_token == '-':
                 out_token = ''
+
+            if out_token == in_token:
+                date_str = str(row.get('Date / Time (UTC)', ''))[:16]
+                usd_str = str(row.get('USD Equivalent', ''))
+                if (date_str, in_token, usd_str) in conversion_signatures:
+                    continue
+
             out_amount = pd.to_numeric(row.get('Output Amount'), errors='coerce')
             usd_value = cls._parse_money(row.get('USD Equivalent'))
             fee = cls._parse_money(row.get('Fee'))
