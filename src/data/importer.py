@@ -121,6 +121,12 @@ class CSVImporter:
 
         return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
 
+    # Tipi che duplicano un'altra riga dello stesso evento (lato "exchange"
+    # interno di Nexo): stessa data, stesso importo, stesso controvalore USD
+    # della riga lato wallet già generata da un altro Type. Vanno scartati
+    # per non contare due volte la stessa conversione.
+    NEXO_DUPLICATE_TYPES = {'Exchange Deposited On', 'Manual Sell Order'}
+
     @classmethod
     def _parse_nexo(cls, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -131,9 +137,18 @@ class CSVImporter:
         Quando 'Input Currency' e 'Output Currency' differiscono (vere
         conversioni, es. Exchange) genera due righe (sell + buy), come per
         Crypto.com. Il valore arriva da 'USD Equivalent'.
+
+        Alcuni Type ('Exchange Deposited On', 'Manual Sell Order') sono la
+        seconda riga generata da Nexo per lo stesso evento già registrato
+        rispettivamente da 'Deposit To Exchange' e 'Exchange Liquidation':
+        vengono scartati per evitare di contare due volte la stessa conversione.
         """
         rows = []
         for _, row in df.iterrows():
+            tx_kind = str(row.get('Type', '') or '')
+            if tx_kind in cls.NEXO_DUPLICATE_TYPES:
+                continue
+
             in_amount = pd.to_numeric(row.get('Input Amount'), errors='coerce')
             if pd.isna(in_amount):
                 continue
@@ -149,7 +164,6 @@ class CSVImporter:
             if fee_currency == '-':
                 fee_currency = ''
 
-            tx_kind = str(row.get('Type', '') or '')
             details = str(row.get('Details', '') or row.get('normalizedDisplayDetails', '') or '')
             notes = f"{tx_kind} - {details}".strip(' -')
             date = row.get('Date / Time (UTC)')
