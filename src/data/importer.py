@@ -128,31 +128,60 @@ class CSVImporter:
         Usa il segno di 'Input Amount' per buy/sell: i movimenti interni
         (lock/unlock, trasferimenti tra wallet Nexo) si compensano a somma
         zero, mentre interessi/top-up/withdrawal spostano davvero la quantità.
-        Il valore arriva da 'USD Equivalent'.
+        Quando 'Input Currency' e 'Output Currency' differiscono (vere
+        conversioni, es. Exchange) genera due righe (sell + buy), come per
+        Crypto.com. Il valore arriva da 'USD Equivalent'.
         """
         rows = []
         for _, row in df.iterrows():
-            amount = pd.to_numeric(row.get('Input Amount'), errors='coerce')
-            if pd.isna(amount):
+            in_amount = pd.to_numeric(row.get('Input Amount'), errors='coerce')
+            if pd.isna(in_amount):
                 continue
 
-            token = str(row.get('Input Currency') or row.get('Output Currency') or '').strip()
+            in_token = str(row.get('Input Currency', '') or '').strip()
+            out_token = str(row.get('Output Currency', '') or '').strip()
+            out_amount = pd.to_numeric(row.get('Output Amount'), errors='coerce')
             usd_value = cls._parse_money(row.get('USD Equivalent'))
             fee = cls._parse_money(row.get('Fee'))
-
-            qty = abs(amount)
-            tx_type = 'buy' if amount >= 0 else 'sell'
-            price = (usd_value / qty) if qty else 0.0
+            fee_currency = str(row.get('Fee Currency', '') or '').strip()
 
             tx_kind = str(row.get('Type', '') or '')
             details = str(row.get('Details', '') or row.get('normalizedDisplayDetails', '') or '')
             notes = f"{tx_kind} - {details}".strip(' -')
+            date = row.get('Date / Time (UTC)')
 
-            rows.append({
-                'Date (UTC+1:00)': row.get('Date / Time (UTC)'), 'Token': token,
-                'Type': tx_type, 'Amount': qty, 'Price': price, 'Fee': fee,
-                'Notes': notes, 'Original Currency': 'USD'
-            })
+            is_conversion = (
+                out_token != '' and out_token != in_token and not pd.isna(out_amount)
+            )
+
+            if is_conversion:
+                qty_sell = abs(in_amount)
+                price_sell = (usd_value / qty_sell) if qty_sell else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': in_token, 'Type': 'sell',
+                    'Amount': qty_sell, 'Price': price_sell,
+                    'Fee': fee if fee_currency == in_token else 0.0,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+
+                qty_buy = abs(out_amount)
+                price_buy = (usd_value / qty_buy) if qty_buy else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': out_token, 'Type': 'buy',
+                    'Amount': qty_buy, 'Price': price_buy,
+                    'Fee': fee if fee_currency == out_token else 0.0,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+            else:
+                token = in_token or out_token
+                qty = abs(in_amount)
+                tx_type = 'buy' if in_amount >= 0 else 'sell'
+                price = (usd_value / qty) if qty else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': token,
+                    'Type': tx_type, 'Amount': qty, 'Price': price, 'Fee': fee,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
 
         return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
 
