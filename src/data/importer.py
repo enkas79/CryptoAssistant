@@ -140,10 +140,14 @@ class CSVImporter:
 
             in_token = str(row.get('Input Currency', '') or '').strip()
             out_token = str(row.get('Output Currency', '') or '').strip()
+            if out_token == '-':
+                out_token = ''
             out_amount = pd.to_numeric(row.get('Output Amount'), errors='coerce')
             usd_value = cls._parse_money(row.get('USD Equivalent'))
             fee = cls._parse_money(row.get('Fee'))
             fee_currency = str(row.get('Fee Currency', '') or '').strip()
+            if fee_currency == '-':
+                fee_currency = ''
 
             tx_kind = str(row.get('Type', '') or '')
             details = str(row.get('Details', '') or row.get('normalizedDisplayDetails', '') or '')

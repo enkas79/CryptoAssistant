@@ -811,11 +811,25 @@ class TradingTerminalWindow(QMainWindow):
                 ax = self.figure.add_axes([0.4, 0.0, 0.6, 1.0])
 
                 if values and sum(values) > 0:
-                    wedges, texts = ax.pie(values, startangle=90, colors=colors, wedgeprops=dict(width=0.45))
+                    # Limita le fette in legenda: oltre MAX_FETTE asset, raggruppa i più
+                    # piccoli in "Altri" per evitare legende enormi (lente e a rischio
+                    # di problemi di rendering con portafogli molto frammentati).
+                    MAX_FETTE = 12
+                    if len(values) > MAX_FETTE:
+                        order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+                        top_idx = order[:MAX_FETTE - 1]
+                        altri_idx = order[MAX_FETTE - 1:]
+                        values_plot = [values[i] for i in top_idx] + [sum(values[i] for i in altri_idx)]
+                        labels_plot = [labels[i] for i in top_idx] + ["Altri"]
+                        colors_plot = [colors[i] for i in top_idx] + ["#adb5bd"]
+                    else:
+                        values_plot, labels_plot, colors_plot = values, labels, colors
+
+                    wedges, texts = ax.pie(values_plot, startangle=90, colors=colors_plot, wedgeprops=dict(width=0.45))
                     legend_labels = []
-                    total = sum(values)
-                    for i, l in enumerate(labels):
-                        val = values[i]
+                    total = sum(values_plot)
+                    for i, l in enumerate(labels_plot):
+                        val = values_plot[i]
                         perc = (val / total) * 100
                         legend_labels.append(f"{l}: {perc:.1f}% ({val:,.0f}{simb})")
                     ax.legend(wedges, legend_labels, title="Asset", loc="center left",
