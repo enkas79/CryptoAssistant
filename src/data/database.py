@@ -137,6 +137,17 @@ class TransactionDatabase:
     def get_dataframe(self) -> Optional[pd.DataFrame]:
         """Get the current DataFrame."""
         return self.df
+
+    def clear_all(self) -> bool:
+        """Rimuove tutte le transazioni e cancella il file su disco."""
+        self.df = None
+        if os.path.exists(self.db_file):
+            try:
+                os.remove(self.db_file)
+            except OSError as e:
+                print(f"Errore rimozione database: {e}")
+                return False
+        return True
     
     def get_tokens(self) -> list:
         """Get list of unique tokens in the database."""

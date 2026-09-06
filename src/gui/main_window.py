@@ -154,10 +154,14 @@ class TradingTerminalWindow(QMainWindow):
         layout_h_outer = QVBoxLayout(header)
         layout_h_outer.setSpacing(8)
         riga_filtri = QHBoxLayout()
-        riga_azioni = QHBoxLayout()
 
         self.btn_aggiungi = QPushButton("\u2795 Importa CSV")
         self.btn_aggiungi.clicked.connect(self.importa_files)
+
+        self.btn_reset_db = QPushButton("\ud83d\uddd1 Reset")
+        self.btn_reset_db.setToolTip("Cancella tutte le transazioni importate per ricaricare i CSV da zero")
+        self.btn_reset_db.setStyleSheet("background-color: #dc3545; color: white;")
+        self.btn_reset_db.clicked.connect(self.reset_database)
 
         # --- Selettore rapido Anno (imposta Da/A sull'intero anno) ---
         self.combo_anno_filtro = QComboBox()
@@ -206,6 +210,8 @@ class TradingTerminalWindow(QMainWindow):
         self.combo_nazione.currentIndexChanged.connect(self.on_nazione_changed)
 
         riga_filtri.setSpacing(6)
+        riga_filtri.addWidget(self.btn_valuta)
+        riga_filtri.addSpacing(14)
         riga_filtri.addWidget(QLabel("<b>Asset:</b>"))
         riga_filtri.addWidget(self.combo_token)
         riga_filtri.addSpacing(14)
@@ -218,14 +224,11 @@ class TradingTerminalWindow(QMainWindow):
         riga_filtri.addStretch()
         riga_filtri.addWidget(QLabel("<b>Nazione:</b>"))
         riga_filtri.addWidget(self.combo_nazione)
-
-        riga_azioni.setSpacing(8)
-        riga_azioni.addWidget(self.btn_valuta)
-        riga_azioni.addStretch()
-        riga_azioni.addWidget(self.btn_aggiungi)
+        riga_filtri.addSpacing(14)
+        riga_filtri.addWidget(self.btn_reset_db)
+        riga_filtri.addWidget(self.btn_aggiungi)
 
         layout_h_outer.addLayout(riga_filtri)
-        layout_h_outer.addLayout(riga_azioni)
         layout_principale.addWidget(header)
         
         self.progress_bar = QProgressBar()
@@ -654,6 +657,30 @@ class TradingTerminalWindow(QMainWindow):
                 QMessageBox.information(self, "Import", "Nessun nuovo dato aggiunto.")
         else:
             QMessageBox.warning(self, "Import", "Nessun dato valido.")
+
+    def reset_database(self):
+        """Svuota il database delle transazioni per permettere un nuovo caricamento da zero."""
+        risposta = QMessageBox.question(
+            self, "Reset Database",
+            "⚠️ Tutte le transazioni importate verranno eliminate.\n"
+            "Vuoi continuare per poter ricaricare nuovi file CSV?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if risposta != QMessageBox.StandardButton.Yes:
+            return
+
+        self.database.clear_all()
+        self.df_master = None
+        self.tabella.setRowCount(0)
+        self.label_total_netto.setText("---")
+        self.label_live_price.setText("---")
+        self.label_qta_visibile.setText("Quantità: ---")
+        self.label_pmc.setText("PMC: ---")
+        self.label_invest_perf.setText("---")
+        self.label_val_att_perf.setText("---")
+        self.aggiorna_menu_token()
+        QMessageBox.information(self, "Reset Database", "✅ Database svuotato. Puoi importare nuovi file CSV.")
 
     def aggiorna_menu_token(self):
         """Update the token dropdown menu."""
