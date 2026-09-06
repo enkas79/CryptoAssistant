@@ -593,7 +593,7 @@ class TradingTerminalWindow(QMainWindow):
             """
             
             if tax_summary['declaration_required']:
-                result_text += "⚠️ <b>Dichiarazione RW obbligatoria</b> (portafoglio > €{:,.2f}).<br>".format(
+                result_text += "⚠️ <b>Dichiarazione RW obbligatoria</b> (portafoglio > {}).<br>".format(
                     tax_summary['rule']['declaration_threshold']
                 )
             
