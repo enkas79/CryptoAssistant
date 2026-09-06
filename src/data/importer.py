@@ -149,10 +149,13 @@ class CSVImporter:
         On' duplica invece una conversione già generata da 'Deposit To
         Exchange' e viene scartata per Type.
         """
+        def _is_rejected(row) -> bool:
+            return 'rejected' in str(row.get('Details', '') or '').lower()
+
         conversion_signatures = set()
         for _, row in df.iterrows():
             tx_kind = str(row.get('Type', '') or '')
-            if tx_kind in cls.NEXO_DUPLICATE_TYPES:
+            if tx_kind in cls.NEXO_DUPLICATE_TYPES or _is_rejected(row):
                 continue
             in_tok = str(row.get('Input Currency', '') or '').strip()
             out_tok = str(row.get('Output Currency', '') or '').strip()
@@ -167,6 +170,11 @@ class CSVImporter:
         for _, row in df.iterrows():
             tx_kind = str(row.get('Type', '') or '')
             if tx_kind in cls.NEXO_DUPLICATE_TYPES:
+                continue
+
+            # Una transazione rifiutata (fallita) non ha mai spostato fondi
+            # davvero: va esclusa, non solo dedotta come "eco" di un'altra riga.
+            if _is_rejected(row):
                 continue
 
             in_amount = pd.to_numeric(row.get('Input Amount'), errors='coerce')
