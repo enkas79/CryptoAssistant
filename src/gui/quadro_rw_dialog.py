@@ -10,14 +10,31 @@ dizionari prezzi da passare a TaxCalculator.get_tax_summary().
 
 from typing import Dict, List, Tuple
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QDialogButtonBox, QHeaderView
 )
 
-from api.coingecko import CoinGeckoAPI, HistoricalPricesWorker
+
+class _FetchThread(QThread):
+    """Scarica in background le quotazioni di inizio/fine anno dal provider."""
+
+    finished = pyqtSignal(dict, dict)
+
+    def __init__(self, provider, symbols: List[str], year: int):
+        super().__init__()
+        self._provider = provider
+        self._symbols = symbols
+        self._year = year
+
+    def run(self) -> None:  # pragma: no cover - thread Qt
+        try:
+            start, end = self._provider.get_prices_for_year_bounds(self._symbols, self._year)
+        except Exception:
+            start, end = {}, {}
+        self.finished.emit(start or {}, end or {})
 
 
 class QuadroRWDialog(QDialog):
@@ -26,13 +43,13 @@ class QuadroRWDialog(QDialog):
     COL_TOKEN, COL_QTA_IN, COL_PREZZO_IN, COL_QTA_FIN, COL_PREZZO_FIN = range(5)
 
     def __init__(self, bounds: List[Tuple[str, float, float]], year: int,
-                 cache_path: str = None, parent=None):
+                 price_provider=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Quadro RW {year} - Valorizzazione cripto-attività")
         self.resize(640, 460)
         self._year = year
         self._bounds = bounds
-        self._api = CoinGeckoAPI(cache_path=cache_path)
+        self._provider = price_provider
         self._worker = None
 
         layout = QVBoxLayout(self)
@@ -59,7 +76,7 @@ class QuadroRWDialog(QDialog):
         layout.addWidget(self.tabella)
 
         riga_btn = QHBoxLayout()
-        self.btn_scarica = QPushButton("↻ Scarica quotazioni (CoinGecko)")
+        self.btn_scarica = QPushButton("↻ Scarica quotazioni")
         self.btn_scarica.clicked.connect(self._scarica_prezzi)
         riga_btn.addWidget(self.btn_scarica)
         riga_btn.addStretch()
@@ -72,7 +89,8 @@ class QuadroRWDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
-        self._scarica_prezzi()
+        if self._provider is not None:
+            self._scarica_prezzi()
 
     def _set_readonly(self, riga: int, col: int, testo: str) -> None:
         item = QTableWidgetItem(testo)
@@ -90,10 +108,12 @@ class QuadroRWDialog(QDialog):
             item.setBackground(QColor("white"))
 
     def _scarica_prezzi(self) -> None:
+        if self._provider is None:
+            return
         self.btn_scarica.setEnabled(False)
         self.btn_scarica.setText("Scarico in corso...")
         simboli = [t for t, _, _ in self._bounds]
-        self._worker = HistoricalPricesWorker(self._api, simboli, self._year)
+        self._worker = _FetchThread(self._provider, simboli, self._year)
         self._worker.finished.connect(self._prezzi_pronti)
         self._worker.start()
 
@@ -106,7 +126,7 @@ class QuadroRWDialog(QDialog):
                 self.tabella.item(riga, self.COL_PREZZO_FIN).setText(f"{prezzi_fine[token]:.6f}")
                 self._smarca(riga, self.COL_PREZZO_FIN)
         self.btn_scarica.setEnabled(True)
-        self.btn_scarica.setText("↻ Scarica quotazioni (CoinGecko)")
+        self.btn_scarica.setText("↻ Scarica quotazioni")
 
     @staticmethod
     def _num(item) -> float:

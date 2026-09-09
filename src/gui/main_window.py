@@ -46,6 +46,8 @@ from data.importer import CSVImporter
 from data.models import COIN_COLORS, FALLBACK_COLORS
 from data.tax_rules import TaxRulesManager
 from api.coinmarketcap import CoinMarketCapAPI, LivePricesWorker
+from api.coingecko import CoinGeckoAPI
+from api.historical_prices import ChainedHistoricalPrices
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from utils.config import save_config, get_user_data_dir
 from utils.currency import CurrencyConverter
@@ -627,9 +629,8 @@ class TradingTerminalWindow(QMainWindow):
             QMessageBox.warning(self, "Tasse", "Nessun dato disponibile per il calcolo delle tasse.")
             return
         
-        country_name = self.combo_nazione.currentText()
         year = int(self.combo_anno_tasse.currentText())
-        
+
         try:
             prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
             tax_summary = self.tax_calculator.get_tax_summary(
@@ -700,8 +701,12 @@ class TradingTerminalWindow(QMainWindow):
             QMessageBox.information(self, "Quadro RW", f"Nessuna cripto-attività detenuta nel {year}.")
             return
 
-        cache_path = str(get_user_data_dir() / "coingecko_cache.json")
-        dialog = QuadroRWDialog(bounds, year, cache_path=cache_path, parent=self)
+        data_dir = get_user_data_dir()
+        provider = ChainedHistoricalPrices([
+            CoinMarketCapAPI(self.cmc_api.api_key, cache_path=str(data_dir / "cmc_storico.json")),
+            CoinGeckoAPI(cache_path=str(data_dir / "coingecko_cache.json")),
+        ])
+        dialog = QuadroRWDialog(bounds, year, price_provider=provider, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._rw_prezzi[year] = dialog.prezzi()
             self.calcola_tasse()
