@@ -5,8 +5,12 @@ Calculates taxes for cryptocurrency transactions based on country-specific rules
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import date, datetime
 import pandas as pd
+
+# Aliquota dell'imposta sulle cripto-attività (ex IVAFE): 2 per mille annuo
+# sul valore di fine periodo, rapportato ai giorni di detenzione e alla quota.
+IVAFE_RATE = 0.002
 
 from data.models import Transaction
 from data.tax_rules import TaxRule, TaxCalculationResult, TaxRulesManager
@@ -25,6 +29,23 @@ class TaxableEvent:
     gain: float  # gain = (sell_price - buy_price) * amount
     fee: float  # Transaction fee
     holding_days: int  # Days the token was held
+
+
+@dataclass
+class QuadroRWRow:
+    """
+    Una riga del Quadro RW (monitoraggio fiscale) per una cripto-attività
+    detenuta nel periodo d'imposta.
+    """
+    token: str
+    quantita_iniziale: float
+    valore_iniziale: float   # EUR: valore a inizio periodo o costo del primo acquisto
+    quantita_finale: float
+    valore_finale: float     # EUR: valore al 31/12 o corrispettivo di cessione
+    giorni_possesso: int
+    quota: float             # quota di possesso (1.0 = 100%)
+    ivafe: float             # imposta cripto-attività 0,2% pro-rata giorni/quota
+    note: str = ""
 
 
 class TaxCalculator:
@@ -197,10 +218,10 @@ class TaxCalculator:
             if str(row['Type']).lower() in ('buy', 'sell')
         ]
 
-        # Applica il FIFO sull'intero storico (cosi' i lotti gia' consumati negli
-        # anni precedenti non vengono riutilizzati), poi tiene solo le vendite
-        # effettivamente avvenute nell'anno selezionato.
-        eventi_storico: List[TaxableEvent] = self._apply_fifo(df_storico)
+        # Applica il metodo di abbinamento lotti sull'intero storico (cosi' i lotti
+        # gia' consumati negli anni precedenti non vengono riutilizzati), poi tiene
+        # solo le vendite effettivamente avvenute nell'anno selezionato.
+        eventi_storico: List[TaxableEvent] = self._apply_cost_basis(df_storico)
         taxable_events = [
             e for e in eventi_storico
             if isinstance(e.date, datetime) and e.date.year == year
@@ -283,55 +304,60 @@ class TaxCalculator:
             all_transactions=all_transactions
         )
     
-    def _apply_fifo(self, df: pd.DataFrame) -> List[TaxableEvent]:
+    def _apply_cost_basis(self, df: pd.DataFrame) -> List[TaxableEvent]:
         """
-        Apply FIFO (First-In-First-Out) to match buy and sell transactions.
-        
+        Abbina acquisti e vendite col metodo previsto dalla regola nazionale
+        (`cost_basis_method`: "LIFO" per l'Italia, "FIFO" altrove).
+
+        Le righe con prezzo <= 0 (trasferimenti tra wallet, fee di rete, reward
+        non ancora valorizzati) NON sono cessioni/acquisti a titolo oneroso:
+        vengono ignorate sia come lotti sia come realizzo. Vanno valorizzate a
+        parte (vedi `zero_price_rows`).
+
         Args:
-            df (pd.DataFrame): DataFrame with transactions.
-        
+            df (pd.DataFrame): Transazioni (Price/Fee già normalizzati in EUR).
+
         Returns:
-            List[TaxableEvent]: List of taxable events (sells with matched buys).
+            List[TaxableEvent]: Eventi tassabili (vendite con lotti abbinati).
         """
-        taxable_events = []
-        
-        # Group by token
+        method = getattr(self.rule, 'cost_basis_method', 'FIFO').upper()
+        taxable_events: List[TaxableEvent] = []
+
         for token in df['Token'].unique():
             token_df = df[df['Token'] == token].sort_values('Date (UTC+1:00)')
-            buys = token_df[token_df['Type'] == 'buy'].copy()
-            sells = token_df[token_df['Type'] == 'sell'].copy()
-            
-            # Convert to list of dicts for easier manipulation
-            buy_list = buys.to_dict('records')
-            sell_list = sells.to_dict('records')
-            
-            # Apply FIFO
+            token_df = token_df[token_df['Price'] > 0]
+
+            buy_list = token_df[token_df['Type'] == 'buy'].to_dict('records')
+            sell_list = token_df[token_df['Type'] == 'sell'].to_dict('records')
+
             for sell in sell_list:
                 sell_date = sell['Date (UTC+1:00)']
                 sell_amount = sell['Amount']
                 sell_price = sell['Price']
-                
                 remaining_amount = sell_amount
-                
-                for buy in buy_list:
-                    if remaining_amount <= 0:
+
+                # Lotti disponibili: acquistati non dopo la vendita e non esauriti.
+                available = [
+                    b for b in buy_list
+                    if b['Amount'] > 0 and b['Date (UTC+1:00)'] <= sell_date
+                ]
+                if method == 'LIFO':
+                    available = list(reversed(available))
+
+                for buy in available:
+                    if remaining_amount <= 1e-12:
                         break
-                    
-                    if buy['Amount'] <= 0:
-                        continue
-                    
-                    # Calculate how much we can match from this buy
+
                     match_amount = min(remaining_amount, buy['Amount'])
-                    
-                    # Calculate gain/loss
                     buy_date = buy['Date (UTC+1:00)']
                     buy_price = buy['Price']
                     gain = (sell_price - buy_price) * match_amount
-                    
-                    # Calculate holding period in days
-                    holding_days = (sell_date - buy_date).days if isinstance(sell_date, datetime) and isinstance(buy_date, datetime) else 0
-                    
-                    # Add taxable event
+                    holding_days = (
+                        (sell_date - buy_date).days
+                        if isinstance(sell_date, datetime) and isinstance(buy_date, datetime)
+                        else 0
+                    )
+
                     taxable_events.append(TaxableEvent(
                         date=sell_date,
                         token=token,
@@ -340,15 +366,172 @@ class TaxCalculator:
                         sell_price=sell_price,
                         gain=gain,
                         fee=sell.get('Fee', 0) * (match_amount / sell_amount) if sell_amount > 0 else 0,
-                        holding_days=holding_days
+                        holding_days=holding_days,
                     ))
-                    
-                    # Update remaining amounts
+
                     buy['Amount'] -= match_amount
                     remaining_amount -= match_amount
-        
+
         return taxable_events
-    
+
+    def zero_price_rows(self, df: pd.DataFrame, year: int) -> List[Dict]:
+        """
+        Righe di acquisto con prezzo mancante (0) nell'anno o negli anni
+        precedenti ma ancora rilevanti: reward, airdrop, cashback o
+        trasferimenti in entrata non valorizzati. Vanno esaminate a mano
+        (valore EUR alla ricezione per i proventi, costo originario per i
+        trasferimenti) perché falsano costo base e imposta.
+        """
+        df = df.copy()
+        df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
+        df = df.dropna(subset=['Date (UTC+1:00)'])
+        mask = (
+            (df['Date (UTC+1:00)'].dt.year <= year)
+            & (df['Type'].astype(str).str.lower() == 'buy')
+            & (df['Price'] <= 0)
+        )
+        out = []
+        for _, r in df[mask].sort_values('Date (UTC+1:00)').iterrows():
+            out.append({
+                'date': r['Date (UTC+1:00)'].strftime('%d/%m/%Y'),
+                'token': r['Token'],
+                'amount': float(r['Amount']),
+                'notes': str(r.get('Notes', '') or ''),
+            })
+        return out
+
+    def holdings_bounds(self, df: pd.DataFrame, year: int) -> List[Tuple[str, float, float]]:
+        """
+        Per ogni token rilevante nell'anno restituisce (token, qtà al 1° gennaio,
+        qtà al 31 dicembre). Serve a sapere quali quotazioni storiche recuperare.
+        Esclude i token già azzerati prima dell'anno e mai più movimentati.
+        """
+        df = df.copy()
+        df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
+        df = df.dropna(subset=['Date (UTC+1:00)'])
+        df = df[df['Date (UTC+1:00)'].dt.year <= year]
+        year_start = pd.Timestamp(year, 1, 1)
+
+        out: List[Tuple[str, float, float]] = []
+        for token in sorted(df['Token'].unique()):
+            tdf = df[df['Token'] == token]
+            delta = tdf.apply(
+                lambda r: r['Amount'] if str(r['Type']).lower() == 'buy' else -r['Amount'],
+                axis=1,
+            )
+            qty_start = max(delta[tdf['Date (UTC+1:00)'] < year_start].sum(), 0.0)
+            qty_end = max(delta.sum(), 0.0)
+            movimentato = (tdf['Date (UTC+1:00)'].dt.year == year).any()
+            if qty_start <= 1e-9 and qty_end <= 1e-9 and not movimentato:
+                continue
+            out.append((token, float(qty_start), float(qty_end)))
+        return out
+
+    def build_quadro_rw(
+        self,
+        df: pd.DataFrame,
+        year: int,
+        prices_start: Dict[str, float],
+        prices_end: Dict[str, float],
+    ) -> List[QuadroRWRow]:
+        """
+        Costruisce le righe del Quadro RW per l'anno indicato.
+
+        Args:
+            df: Storico completo delle transazioni.
+            year: Anno d'imposta.
+            prices_start: Quotazione EUR di ogni token al 1° gennaio dell'anno.
+            prices_end: Quotazione EUR di ogni token al 31 dicembre dell'anno.
+
+        Returns:
+            Una riga per ogni token detenuto (anche solo in parte dell'anno).
+        """
+        df = df.copy()
+        df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
+        df = df.dropna(subset=['Date (UTC+1:00)'])
+        df = self._normalize_to_eur(df[df['Date (UTC+1:00)'].dt.year <= year].copy())
+
+        year_start = pd.Timestamp(year, 1, 1)
+        year_end = pd.Timestamp(year, 12, 31)
+        days_in_year = (date(year, 12, 31) - date(year, 1, 1)).days + 1
+
+        rows: List[QuadroRWRow] = []
+        for token in sorted(df['Token'].unique()):
+            tdf = df[df['Token'] == token].sort_values('Date (UTC+1:00)').copy()
+            tdf['_delta'] = tdf.apply(
+                lambda r: r['Amount'] if str(r['Type']).lower() == 'buy' else -r['Amount'],
+                axis=1,
+            )
+            tdf['_cum'] = tdf['_delta'].cumsum()
+
+            qty_start = max(tdf.loc[tdf['Date (UTC+1:00)'] < year_start, '_delta'].sum(), 0.0)
+            qty_end = max(tdf['_delta'].sum(), 0.0)
+
+            in_year = tdf[tdf['Date (UTC+1:00)'].dt.year == year]
+            in_year_buys = in_year[in_year['Type'].astype(str).str.lower() == 'buy']
+
+            held_at_start = qty_start > 1e-9
+            held_at_end = qty_end > 1e-9
+            if not held_at_start and not held_at_end and in_year_buys.empty:
+                continue
+
+            if held_at_start:
+                first_day = year_start
+            else:
+                if in_year_buys.empty:
+                    continue
+                first_day = in_year_buys['Date (UTC+1:00)'].min().normalize()
+
+            if held_at_end:
+                last_day = year_end
+            else:
+                zeroing = in_year[in_year['_cum'] <= 1e-9]
+                last_day = (
+                    zeroing['Date (UTC+1:00)'].min().normalize()
+                    if not zeroing.empty else year_end
+                )
+
+            giorni = (last_day.date() - first_day.date()).days + 1
+            giorni = max(0, min(giorni, days_in_year))
+
+            price_s = prices_start.get(token, 0.0) or 0.0
+            price_e = prices_end.get(token, 0.0) or 0.0
+
+            if held_at_start:
+                valore_iniziale = qty_start * price_s
+            else:
+                priced = in_year_buys[in_year_buys['Price'] > 0]
+                valore_iniziale = float((priced['Amount'] * priced['Price']).sum())
+
+            if held_at_end:
+                valore_finale = qty_end * price_e
+            else:
+                sells = in_year[
+                    (in_year['Type'].astype(str).str.lower() == 'sell') & (in_year['Price'] > 0)
+                ]
+                valore_finale = float((sells['Amount'] * sells['Price']).sum())
+
+            ivafe = valore_finale * IVAFE_RATE * giorni / days_in_year
+
+            note = ""
+            if not held_at_end:
+                note = "Posizione chiusa nell'anno: valore finale = corrispettivo di cessione."
+            elif not held_at_start:
+                note = "Acquisita nell'anno: valore iniziale = costo d'acquisto."
+
+            rows.append(QuadroRWRow(
+                token=token,
+                quantita_iniziale=qty_start,
+                valore_iniziale=valore_iniziale,
+                quantita_finale=qty_end,
+                valore_finale=valore_finale,
+                giorni_possesso=int(giorni),
+                quota=1.0,
+                ivafe=ivafe,
+                note=note,
+            ))
+        return rows
+
     def _calculate_portfolio_value(self, df: pd.DataFrame, year: int) -> float:
         """
         Calculate the total portfolio value at the end of the year.
@@ -386,14 +569,24 @@ class TaxCalculator:
         
         return portfolio_value
     
-    def get_tax_summary(self, df: pd.DataFrame, year: Optional[int] = None) -> Dict:
+    def get_tax_summary(
+        self,
+        df: pd.DataFrame,
+        year: Optional[int] = None,
+        prices_start: Optional[Dict[str, float]] = None,
+        prices_end: Optional[Dict[str, float]] = None,
+    ) -> Dict:
         """
         Get a summary of tax calculations for a given year.
-        
+
         Args:
             df (pd.DataFrame): DataFrame with transactions.
             year (Optional[int]): Year for which to calculate taxes.
-        
+            prices_start (Optional[Dict[str, float]]): Quotazioni EUR al 1° gennaio
+                dell'anno, per token. Se fornite (insieme a prices_end) il
+                riepilogo include il Quadro RW e l'imposta cripto-attività.
+            prices_end (Optional[Dict[str, float]]): Quotazioni EUR al 31 dicembre.
+
         Returns:
             Dict: Summary of tax calculations.
         """
@@ -403,9 +596,28 @@ class TaxCalculator:
         result = self.calculate_taxes(df, year)
         rate, threshold = self._effective_rate_and_threshold(year)
 
+        quadro_rw: List[Dict] = []
+        imposta_cripto_totale = 0.0
+        if prices_start is not None and prices_end is not None:
+            righe = self.build_quadro_rw(df, year, prices_start, prices_end)
+            for r in righe:
+                quadro_rw.append({
+                    "token": r.token,
+                    "quantita_iniziale": r.quantita_iniziale,
+                    "valore_iniziale": round(r.valore_iniziale, 2),
+                    "quantita_finale": r.quantita_finale,
+                    "valore_finale": round(r.valore_finale, 2),
+                    "giorni_possesso": r.giorni_possesso,
+                    "quota": r.quota,
+                    "ivafe": round(r.ivafe, 2),
+                    "note": r.note,
+                })
+            imposta_cripto_totale = sum(r.ivafe for r in righe)
+
         return {
             "country": result.country,
             "year": result.year,
+            "cost_basis_method": getattr(self.rule, "cost_basis_method", "FIFO"),
             "capital_gain": round(result.capital_gain, 2),
             "capital_gain_tax": round(result.capital_gain_tax, 2),
             "stamp_duty": round(result.stamp_duty, 2),
@@ -414,6 +626,9 @@ class TaxCalculator:
             "taxable_transactions_count": len(result.taxable_transactions),
             "taxable_transactions": result.taxable_transactions,
             "all_transactions": result.all_transactions,
+            "quadro_rw": quadro_rw,
+            "imposta_cripto_totale": round(imposta_cripto_totale, 2),
+            "zero_price_rows": self.zero_price_rows(df, year),
             "notes": result.notes,
             "rule": {
                 "capital_gain_rate": f"{rate * 100:.0f}%",

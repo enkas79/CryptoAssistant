@@ -47,7 +47,7 @@ from data.models import COIN_COLORS, FALLBACK_COLORS
 from data.tax_rules import TaxRulesManager
 from api.coinmarketcap import CoinMarketCapAPI, LivePricesWorker
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
-from utils.config import save_config
+from utils.config import save_config, get_user_data_dir
 from utils.currency import CurrencyConverter
 from utils.dates import parse_dates_safe
 from utils.calculations import (
@@ -60,6 +60,7 @@ from utils.calculations import (
 from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
 from utils.updater import UpdateCheckWorker, UpdateDownloadWorker, avvia_installer_e_esci
+from gui.quadro_rw_dialog import QuadroRWDialog
 
 
 class TradingTerminalWindow(QMainWindow):
@@ -103,6 +104,9 @@ class TradingTerminalWindow(QMainWindow):
         # Initialize tax calculator (default: Italy)
         self.tax_rules_manager = TaxRulesManager()
         self.tax_calculator = TaxCalculator(country_code="IT", historical_rates=self.tassi_storici)
+        # Quotazioni storiche 1/1 e 31/12 valorizzate a mano nel dialog Quadro RW,
+        # riusate dal report PDF: {anno: (prezzi_inizio, prezzi_fine)}
+        self._rw_prezzi: Dict[int, tuple] = {}
 
         # Initialize UI
         self.initUI()
@@ -394,7 +398,11 @@ class TradingTerminalWindow(QMainWindow):
         self.label_tasse_risultato.setWordWrap(True)
         self.label_tasse_risultato.setStyleSheet("background-color: #fff3cd; padding: 10px; border: 1px solid #ffc107; border-radius: 5px; color: #856404;")
         
-        btn_report_anno_tasse = QPushButton("📄 Report Fiscale Anno")
+        self.btn_quadro_rw = QPushButton("📋 Valorizza Quadro RW (1/1 e 31/12)")
+        self.btn_quadro_rw.setStyleSheet("background-color: #6f42c1; color: white; font-weight: bold; padding: 8px;")
+        self.btn_quadro_rw.clicked.connect(self.apri_quadro_rw)
+
+        btn_report_anno_tasse = QPushButton("📄 Report Fiscale Anno (RW + RT)")
         btn_report_anno_tasse.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold; padding: 8px;")
         btn_report_anno_tasse.clicked.connect(self.genera_pdf_tasse_anno)
 
@@ -402,6 +410,7 @@ class TradingTerminalWindow(QMainWindow):
         layout_tasse.addWidget(self.combo_anno_tasse)
         layout_tasse.addWidget(btn_calcola_tasse)
         layout_tasse.addWidget(self.label_tasse_risultato)
+        layout_tasse.addWidget(self.btn_quadro_rw)
         layout_tasse.addWidget(btn_report_anno_tasse)
         self.group_tasse.setLayout(layout_tasse)
         sidebar.addWidget(self.group_tasse)
@@ -622,31 +631,80 @@ class TradingTerminalWindow(QMainWindow):
         year = int(self.combo_anno_tasse.currentText())
         
         try:
-            # Calculate taxes
-            tax_summary = self.tax_calculator.get_tax_summary(self.df_master, year)
-            
-            # Format the result
+            prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
+            tax_summary = self.tax_calculator.get_tax_summary(
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+            )
+
             result_text = f"""
-            <b>Calcolo Tasse per {tax_summary['country']} ({tax_summary['year']})</b><br><br>
-            <b>Plusvalenze:</b> €{tax_summary['capital_gain']:,.2f}<br>
+            <b>Calcolo Tasse per {tax_summary['country']} ({tax_summary['year']})</b><br>
+            <i>Metodo costo base: {tax_summary['cost_basis_method']}</i><br><br>
+            <b>Quadro RT - Plusvalenze:</b> €{tax_summary['capital_gain']:,.2f}<br>
             <b>Imposta su Plusvalenze ({tax_summary['rule']['capital_gain_rate']}):</b> €{tax_summary['capital_gain_tax']:,.2f}<br>
             <b>Imposta di Bollo:</b> €{tax_summary['stamp_duty']:,.2f}<br>
-            <b>Totale Tasse:</b> <span style='color: #dc3545; font-weight: bold;'>€{tax_summary['total_tax']:,.2f}</span><br><br>
             """
-            
+
+            if tax_summary['quadro_rw']:
+                result_text += (
+                    f"<b>Quadro RW - Imposta cripto-attività (0,2%):</b> "
+                    f"€{tax_summary['imposta_cripto_totale']:,.2f}<br>"
+                )
+            else:
+                result_text += (
+                    "<i>Quadro RW non valorizzato: usa il pulsante «Valorizza Quadro RW».</i><br>"
+                )
+
+            result_text += (
+                f"<b>Totale Tasse:</b> <span style='color: #dc3545; font-weight: bold;'>"
+                f"€{tax_summary['total_tax']:,.2f}</span><br><br>"
+            )
+
             if tax_summary['declaration_required']:
                 result_text += "⚠️ <b>Dichiarazione RW obbligatoria</b> (portafoglio > {}).<br>".format(
                     tax_summary['rule']['declaration_threshold']
                 )
-            
+
+            if tax_summary['zero_price_rows']:
+                result_text += (
+                    f"⚠️ {len(tax_summary['zero_price_rows'])} righe di acquisto senza prezzo "
+                    "da verificare (vedi report PDF).<br>"
+                )
+
             if tax_summary['notes']:
                 result_text += "<br><b>Note:</b><br>" + "<br>".join(tax_summary['notes'])
-            
+
+            result_text += (
+                "<br><br><i>Output da far validare al commercialista.</i>"
+            )
+
             self.label_tasse_risultato.setText(result_text)
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Errore", f"Errore nel calcolo delle tasse: {e}")
             self.label_tasse_risultato.setText("Errore nel calcolo delle tasse.")
+
+    def apri_quadro_rw(self):
+        """Apre il dialog per valorizzare le cripto-attività al 1/1 e al 31/12."""
+        if self.df_master is None or self.df_master.empty:
+            QMessageBox.warning(self, "Quadro RW", "Nessun dato disponibile.")
+            return
+
+        year = int(self.combo_anno_tasse.currentText())
+        try:
+            bounds = self.tax_calculator.holdings_bounds(self.df_master, year)
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Errore nel calcolo delle giacenze: {e}")
+            return
+
+        if not bounds:
+            QMessageBox.information(self, "Quadro RW", f"Nessuna cripto-attività detenuta nel {year}.")
+            return
+
+        cache_path = str(get_user_data_dir() / "coingecko_cache.json")
+        dialog = QuadroRWDialog(bounds, year, cache_path=cache_path, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._rw_prezzi[year] = dialog.prezzi()
+            self.calcola_tasse()
 
     def genera_pdf_tasse_anno(self):
         """Genera il report fiscale PDF con il calcolo tasse dell'anno selezionato."""
@@ -663,7 +721,23 @@ class TradingTerminalWindow(QMainWindow):
             return
 
         try:
-            tax_summary = self.tax_calculator.get_tax_summary(self.df_master, year)
+            prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
+            if prezzi_inizio is None:
+                risposta = QMessageBox.question(
+                    self, "Quadro RW non valorizzato",
+                    "Non hai ancora valorizzato il Quadro RW per questo anno "
+                    "(quotazioni 1/1 e 31/12). Il report conterrà solo il Quadro RT.\n\n"
+                    "Vuoi valorizzarlo ora?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if risposta == QMessageBox.StandardButton.Yes:
+                    self.apri_quadro_rw()
+                    prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
+
+            tax_summary = self.tax_calculator.get_tax_summary(
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+            )
 
             generator = FiscalReportGenerator(
                 live_prices=self.prezzi_live,

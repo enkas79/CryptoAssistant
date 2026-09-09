@@ -179,8 +179,10 @@ class FiscalReportGenerator:
 
     def generate_tax_report(self, tax_summary: Dict, output_path: str) -> bool:
         """
-        Genera il PDF del calcolo tasse per l'anno e la nazione selezionati,
-        con il dettaglio delle plusvalenze imponibili (FIFO).
+        Genera il PDF del calcolo tasse per l'anno e la nazione selezionati:
+        Quadro RW (monitoraggio + imposta cripto-attivita 0,2%) e Quadro RT
+        (plusvalenze/minusvalenze col metodo previsto dalla normativa, LIFO
+        per l'Italia).
 
         Args:
             tax_summary (Dict): Risultato di TaxCalculator.get_tax_summary().
@@ -225,11 +227,71 @@ class FiscalReportGenerator:
                 for note in tax_summary["notes"]:
                     pdf.multi_cell(190, 6, _pdf_safe(f"- {note}"))
 
+            metodo = tax_summary.get("cost_basis_method", "FIFO")
+
+            quadro_rw = tax_summary.get("quadro_rw", [])
+            if quadro_rw:
+                pdf.ln(6)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(190, 8, _pdf_safe("QUADRO RW - MONITORAGGIO CRIPTO-ATTIVITA"), ln=True)
+                pdf.set_font("Arial", "", 9)
+                pdf.cell(190, 6, _pdf_safe(
+                    "Valori in EUR. Imposta cripto-attivita 0,2% sul valore finale, pro-rata giorni."
+                ), ln=True)
+                pdf.ln(1)
+
+                pdf.set_font("Arial", "B", 8)
+                pdf.cell(22, 8, "Token", 1)
+                pdf.cell(28, 8, "Qta iniziale", 1)
+                pdf.cell(28, 8, "Val. iniziale", 1)
+                pdf.cell(28, 8, "Qta finale", 1)
+                pdf.cell(28, 8, "Val. finale", 1)
+                pdf.cell(16, 8, "Giorni", 1)
+                pdf.cell(22, 8, "Imposta", 1, ln=True)
+
+                pdf.set_font("Arial", "", 8)
+                for r in quadro_rw:
+                    if pdf.get_y() > 265:
+                        pdf.add_page()
+                    pdf.cell(22, 7, _pdf_safe(r["token"])[:10], 1)
+                    pdf.cell(28, 7, f"{r['quantita_iniziale']:.6f}", 1)
+                    pdf.cell(28, 7, f"{r['valore_iniziale']:,.2f}", 1)
+                    pdf.cell(28, 7, f"{r['quantita_finale']:.6f}", 1)
+                    pdf.cell(28, 7, f"{r['valore_finale']:,.2f}", 1)
+                    pdf.cell(16, 7, str(r["giorni_possesso"]), 1)
+                    pdf.cell(22, 7, f"{r['ivafe']:,.2f}", 1, ln=True)
+
+                pdf.set_font("Arial", "B", 9)
+                pdf.cell(190, 8, _pdf_safe(
+                    f"Imposta cripto-attivita totale: EUR {tax_summary.get('imposta_cripto_totale', 0):,.2f}"
+                ), ln=True)
+                pdf.set_font("Arial", "", 8)
+                for r in quadro_rw:
+                    if r.get("note"):
+                        pdf.multi_cell(190, 5, _pdf_safe(f"- {r['token']}: {r['note']}"))
+
+            zero_rows = tax_summary.get("zero_price_rows", [])
+            if zero_rows:
+                pdf.ln(4)
+                pdf.set_font("Arial", "B", 10)
+                pdf.cell(190, 7, _pdf_safe("RIGHE DA VERIFICARE (acquisti senza prezzo)"), ln=True)
+                pdf.set_font("Arial", "", 8)
+                pdf.multi_cell(190, 5, _pdf_safe(
+                    "Reward/airdrop/cashback o trasferimenti non valorizzati: assegnare il valore "
+                    "EUR alla ricezione (proventi) o il costo originario (trasferimenti)."
+                ))
+                for z in zero_rows:
+                    pdf.multi_cell(190, 5, _pdf_safe(
+                        f"- {z['date']} {z['token']} {z['amount']:.6f} {z.get('notes', '')}"
+                    ))
+
             taxable_transactions = tax_summary.get("taxable_transactions", [])
             if taxable_transactions:
                 pdf.ln(6)
                 pdf.set_font("Arial", "B", 12)
-                pdf.cell(190, 8, "DETTAGLIO PLUSVALENZE/MINUSVALENZE (FIFO)", ln=True)
+                pdf.cell(190, 8, _pdf_safe(
+                    f"QUADRO RT - DETTAGLIO PLUSVALENZE/MINUSVALENZE ({metodo})"
+                ), ln=True)
 
                 pdf.set_font("Arial", "B", 8)
                 pdf.cell(25, 8, "Data", 1)
