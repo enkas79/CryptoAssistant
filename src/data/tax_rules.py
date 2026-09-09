@@ -24,6 +24,7 @@ class TaxRule:
     tax_free_allowance: float  # Annual tax-free allowance (EUR)
     fifo_required: bool  # Whether FIFO method is required for cost basis
     notes: str = ""  # Additional notes (e.g., "Applies from 2026")
+    cost_basis_method: str = "FIFO"  # Metodo di abbinamento lotti: "FIFO" o "LIFO"
 
 
 @dataclass
@@ -60,8 +61,9 @@ class TaxRulesManager:
             declaration_threshold=15000.0,  # EUR 15.000 (annual portfolio value)
             holding_period_exemption=0,  # Nessuna esenzione per detenzione (regola valida solo per valute estere)
             tax_free_allowance=0.0,  # No tax-free allowance in Italy
-            fifo_required=True,  # FIFO is required
-            notes="26% sulle plusvalenze fino al 2025 (franchigia €2.000 solo fino al 2024), 33% dal 2026 senza franchigia. Dichiarazione RW se portafoglio > €15.000."
+            fifo_required=True,  # mantenuto per retrocompatibilità
+            cost_basis_method="LIFO",  # Circ. AdE 30/E/2023, art. 67 TUIR: unico metodo ammesso per le cripto
+            notes="26% sulle plusvalenze fino al 2025 (franchigia €2.000 solo fino al 2024), 33% dal 2026 senza franchigia. Metodo LIFO, commissioni non deducibili. Dichiarazione RW e imposta cripto-attività 0,2%."
         ),
         "FR": TaxRule(
             country="Francia",
