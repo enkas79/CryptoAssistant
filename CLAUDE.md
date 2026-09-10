@@ -50,5 +50,6 @@
 ## 8. Motori di Calcolo (Portafoglio & Fisco)
 Due calcoli DISTINTI, non confonderli:
 * **P/L "stile CoinMarketCap"** (dashboard): Costo Medio Ponderato globale, costo base cumulativo NON ridotto dalle vendite, P/L = realizzato + non realizzato, % sul costo base totale. Specifica completa e caso di validazione in [`docs/calcolo_pl_coinmarketcap.md`](docs/calcolo_pl_coinmarketcap.md). Implementazione: `utils/calculations.py` (`calculate_cmc_style_stats`, `calculate_portfolio_cmc_style`), test `tests/test_cmc_style.py`.
-* **Dichiarazione fiscale (Italia)** in `utils/tax_calculator.py`: metodo **LIFO** obbligatorio (Circ. AdE 30/E/2023), commissioni non deducibili, Quadro RW + imposta cripto-attività 0,2%. NON usa il metodo CMC.
+* **Dichiarazione fiscale (Italia)** in `utils/tax_calculator.py`: metodo **selezionabile LIFO / PMC** (`set_cost_basis_method`) — LIFO è la norma (Circ. AdE 30/E/2023), ma molti CAF usano il PMC (media ponderata statica); default LIFO, override in config `cost_basis_method`. Commissioni non deducibili, Quadro RW + imposta cripto-attività 0,2%. NON usa il metodo CMC.
+* **Dichiarazione sostitutiva atto di notorietà** (.docx) in `utils/dichiarazione.py` + `gui/dichiarazione_dialog.py`: genera il documento nel formato dei CAF dal risultato di `get_tax_summary` (anagrafica in config `dichiarante`).
 * I prezzi storici delle transazioni si rivalutano via `utils/reprice.py` (CoinMarketCap → fallback CoinGecko); i CSV di alcuni wallet hanno prezzi inaffidabili (righe a 0, valori in USD).

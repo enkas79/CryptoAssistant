@@ -42,7 +42,9 @@ jobs:
           --name "CryptoAssistant"
           --paths src
           --collect-all matplotlib
+          --collect-all docx
           --hidden-import PyQt6.QtPrintSupport
+          --hidden-import lxml._elementpath
           --add-data "version.txt;."
           src\main.py
       - name: Install NSIS

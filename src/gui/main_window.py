@@ -65,6 +65,7 @@ from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
 from utils.updater import UpdateCheckWorker, UpdateDownloadWorker, avvia_installer_e_esci
 from gui.quadro_rw_dialog import QuadroRWDialog
+from gui.dichiarazione_dialog import DichiarazioneDialog
 from utils.reprice import RepriceWorker
 
 
@@ -109,6 +110,7 @@ class TradingTerminalWindow(QMainWindow):
         # Initialize tax calculator (default: Italy)
         self.tax_rules_manager = TaxRulesManager()
         self.tax_calculator = TaxCalculator(country_code="IT", historical_rates=self.tassi_storici)
+        self.tax_calculator.set_cost_basis_method(self.config.get("cost_basis_method") or None)
         # Quotazioni storiche 1/1 e 31/12 valorizzate a mano nel dialog Quadro RW,
         # riusate dal report PDF: {anno: (prezzi_inizio, prezzi_fine)}
         self._rw_prezzi: Dict[int, tuple] = {}
@@ -401,6 +403,13 @@ class TradingTerminalWindow(QMainWindow):
             self.combo_anno_tasse.addItem(str(y))
         self.combo_anno_tasse.setCurrentText(str(current_year))
         
+        self.combo_metodo_costo = QComboBox()
+        self.combo_metodo_costo.addItems(["LIFO (norma)", "PMC / media ponderata (molti CAF)"])
+        self.combo_metodo_costo.setCurrentIndex(
+            1 if (self.config.get("cost_basis_method") or "LIFO").upper() == "PMC" else 0
+        )
+        self.combo_metodo_costo.currentIndexChanged.connect(self._on_metodo_costo_changed)
+
         btn_calcola_tasse = QPushButton("\ud83d\udc69 Calcola Tasse")
         btn_calcola_tasse.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; padding: 10px;")
         btn_calcola_tasse.clicked.connect(self.calcola_tasse)
@@ -417,12 +426,19 @@ class TradingTerminalWindow(QMainWindow):
         btn_report_anno_tasse.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold; padding: 8px;")
         btn_report_anno_tasse.clicked.connect(self.genera_pdf_tasse_anno)
 
+        self.btn_dichiarazione = QPushButton("📝 Genera Dichiarazione (.docx)")
+        self.btn_dichiarazione.setStyleSheet("background-color: #17a2b8; color: white; font-weight: bold; padding: 8px;")
+        self.btn_dichiarazione.clicked.connect(self.apri_dichiarazione)
+
         layout_tasse.addWidget(QLabel("Anno:"))
         layout_tasse.addWidget(self.combo_anno_tasse)
+        layout_tasse.addWidget(QLabel("Metodo costo base:"))
+        layout_tasse.addWidget(self.combo_metodo_costo)
         layout_tasse.addWidget(btn_calcola_tasse)
         layout_tasse.addWidget(self.label_tasse_risultato)
         layout_tasse.addWidget(self.btn_quadro_rw)
         layout_tasse.addWidget(btn_report_anno_tasse)
+        layout_tasse.addWidget(self.btn_dichiarazione)
         self.group_tasse.setLayout(layout_tasse)
         sidebar.addWidget(self.group_tasse)
 
@@ -639,7 +655,47 @@ class TradingTerminalWindow(QMainWindow):
                 country_code=rule.country_code,
                 historical_rates=self.tassi_storici
             )
+            self.tax_calculator.set_cost_basis_method(self._metodo_costo_scelto())
             self.label_tasse_risultato.setText(f"Calcolo tasse per {country_name} - Seleziona un anno.")
+
+    def _metodo_costo_scelto(self):
+        """Metodo selezionato nel combo: 'PMC' o None (usa il default della regola)."""
+        return "PMC" if self.combo_metodo_costo.currentIndex() == 1 else None
+
+    def _on_metodo_costo_changed(self, _index: int):
+        metodo = self._metodo_costo_scelto()
+        self.tax_calculator.set_cost_basis_method(metodo)
+        self.config["cost_basis_method"] = metodo or "LIFO"
+        save_config(self.config)
+        if self.df_master is not None and not self.df_master.empty:
+            self.calcola_tasse()
+
+    def apri_dichiarazione(self):
+        """Genera la Dichiarazione sostitutiva dell'atto di notorieta' (.docx)."""
+        if self.df_master is None or self.df_master.empty:
+            QMessageBox.warning(self, "Dichiarazione", "Nessun dato disponibile.")
+            return
+        year = int(self.combo_anno_tasse.currentText())
+        prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
+        if prezzi_inizio is None:
+            risposta = QMessageBox.question(
+                self, "Quadro RW non valorizzato",
+                "Il Quadro RW per questo anno non e' valorizzato: i valori 1/1 e 31/12 "
+                "saranno vuoti nel documento.\n\nVuoi valorizzarlo ora?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if risposta == QMessageBox.StandardButton.Yes:
+                self.apri_quadro_rw()
+                prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
+        try:
+            summary = self.tax_calculator.get_tax_summary(
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", f"Errore nel calcolo: {e}")
+            return
+        DichiarazioneDialog(summary, self.config, parent=self).exec()
 
     def calcola_tasse(self):
         """Calculate taxes for the selected country and year."""
