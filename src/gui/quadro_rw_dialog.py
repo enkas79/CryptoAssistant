@@ -43,7 +43,7 @@ class QuadroRWDialog(QDialog):
     COL_TOKEN, COL_QTA_IN, COL_PREZZO_IN, COL_QTA_FIN, COL_PREZZO_FIN = range(5)
 
     def __init__(self, bounds: List[Tuple[str, float, float]], year: int,
-                 price_provider=None, parent=None):
+                 price_provider=None, prefill=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Quadro RW {year} - Valorizzazione cripto-attività")
         self.resize(640, 460)
@@ -64,12 +64,17 @@ class QuadroRWDialog(QDialog):
         )
         self.tabella.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
+        pf_in, pf_fin = prefill if prefill else ({}, {})
         for riga, (token, qta_in, qta_fin) in enumerate(bounds):
             self._set_readonly(riga, self.COL_TOKEN, token)
             self._set_readonly(riga, self.COL_QTA_IN, f"{qta_in:.8f}")
             self._set_readonly(riga, self.COL_QTA_FIN, f"{qta_fin:.8f}")
-            self.tabella.setItem(riga, self.COL_PREZZO_IN, QTableWidgetItem(""))
-            self.tabella.setItem(riga, self.COL_PREZZO_FIN, QTableWidgetItem(""))
+            p_in = pf_in.get(token, 0.0)
+            p_fin = pf_fin.get(token, 0.0)
+            self.tabella.setItem(riga, self.COL_PREZZO_IN,
+                                 QTableWidgetItem(f"{p_in:.6f}" if p_in else ""))
+            self.tabella.setItem(riga, self.COL_PREZZO_FIN,
+                                 QTableWidgetItem(f"{p_fin:.6f}" if p_fin else ""))
             self._marca_mancante(riga, self.COL_PREZZO_IN)
             self._marca_mancante(riga, self.COL_PREZZO_FIN)
 
@@ -89,7 +94,9 @@ class QuadroRWDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
-        if self._provider is not None:
+        # Scarica in automatico solo se non ci sono gia' valori salvati (che
+        # altrimenti verrebbero sovrascritti); il pulsante resta disponibile.
+        if self._provider is not None and not prefill:
             self._scarica_prezzi()
 
     def _set_readonly(self, riga: int, col: int, testo: str) -> None:
