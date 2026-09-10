@@ -98,6 +98,53 @@ class CoinMarketCapAPI:
         self._save_cache()
         return price
 
+    def get_price_series(self, symbol: str, start_date, end_date, convert: str = "EUR") -> Dict[str, float]:
+        """
+        Serie storica giornaliera EUR di `symbol` tra le due date, in una sola
+        chiamata (endpoint v2 quotes/historical, interval 1d). Chiave "YYYY-MM-DD".
+        Dizionario vuoto se il piano dell'API key non include lo storico o in
+        caso di errore.
+        """
+        sym = str(symbol).upper()
+
+        def _iso(d):
+            if isinstance(d, (datetime, date)):
+                return d.strftime("%Y-%m-%dT00:00:00Z")
+            return str(d)
+
+        try:
+            resp = requests.get(
+                self.HISTORICAL_URL,
+                params={
+                    "symbol": sym,
+                    "convert": convert,
+                    "time_start": _iso(start_date),
+                    "time_end": _iso(end_date),
+                    "interval": "1d",
+                    "count": 10000,
+                },
+                headers=self.headers,
+                timeout=self.REQUEST_TIMEOUT,
+            )
+            payload = resp.json()
+            data = payload.get("data")
+            if not data:
+                return {}
+            entry = data.get(sym) if isinstance(data, dict) else None
+            if isinstance(entry, list):
+                entry = entry[0] if entry else None
+            quotes = (entry or {}).get("quotes") or []
+        except Exception:
+            return {}
+
+        serie: Dict[str, float] = {}
+        for q in quotes:
+            ts = q.get("timestamp", "")[:10]
+            price = q.get("quote", {}).get(convert, {}).get("price")
+            if ts and price is not None:
+                serie[ts] = float(price)
+        return serie
+
     def get_prices_for_year_bounds(
         self, symbols: List[str], year: int, convert: str = "EUR"
     ) -> Tuple[Dict[str, float], Dict[str, float]]:

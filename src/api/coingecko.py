@@ -1,14 +1,15 @@
 """
 CoinGecko API Module
 Recupero delle quotazioni STORICHE in EUR delle cripto-attività, necessarie
-per valorizzare il Quadro RW (valore all'1/1 e al 31/12) e l'imposta
-cripto-attività. Usa l'endpoint pubblico gratuito (nessuna API key) e una
-cache su file per non ripetere le chiamate a ogni calcolo.
+per valorizzare il Quadro RW e per rivalutare i prezzi delle transazioni.
+Usa l'API pubblica; una chiave "demo" gratuita (facoltativa) alza di molto i
+limiti di frequenza. Cache su file per non ripetere le chiamate.
 """
 
 import json
 import os
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -56,13 +57,18 @@ class CoinGeckoAPI:
         "JUP": "jupiter-exchange-solana",
     }
 
-    def __init__(self, cache_path: Optional[str] = None):
+    def __init__(self, cache_path: Optional[str] = None, api_key: Optional[str] = None):
         """
         Args:
             cache_path: percorso di un file JSON dove salvare i prezzi già
                 scaricati. Se None la cache è solo in memoria.
+            api_key: chiave "demo" gratuita di CoinGecko (facoltativa ma
+                consigliata: senza chiave l'API pubblica è fortemente limitata).
         """
         self.cache_path = cache_path
+        self._headers = {"accept": "application/json"}
+        if api_key:
+            self._headers["x-cg-demo-api-key"] = api_key
         self._cache: Dict[str, float] = {}
         if cache_path and os.path.exists(cache_path):
             try:
@@ -100,24 +106,66 @@ class CoinGeckoAPI:
         if key in self._cache:
             return self._cache[key]
 
-        try:
-            resp = requests.get(
-                f"{self.BASE_URL}/coins/{coin_id}/history",
-                params={"date": date_str, "localization": "false"},
-                timeout=self.REQUEST_TIMEOUT,
-                headers={"accept": "application/json"},
-            )
-            payload = resp.json()
-            price = payload.get("market_data", {}).get("current_price", {}).get(vs)
-            if price is None:
+        price = None
+        for tentativo in range(4):
+            try:
+                resp = requests.get(
+                    f"{self.BASE_URL}/coins/{coin_id}/history",
+                    params={"date": date_str, "localization": "false"},
+                    timeout=self.REQUEST_TIMEOUT,
+                    headers=self._headers,
+                )
+                if resp.status_code == 429:  # rate limit: attende e riprova
+                    time.sleep(6 * (tentativo + 1))
+                    continue
+                payload = resp.json()
+                price = payload.get("market_data", {}).get("current_price", {}).get(vs)
+                break
+            except Exception:
                 return None
-            price = float(price)
-        except Exception:
-            return None
 
+        if price is None:
+            return None
+        price = float(price)
         self._cache[key] = price
         self._save_cache()
         return price
+
+    def get_price_series(self, symbol: str, start_date, end_date, vs: str = "eur") -> Dict[str, float]:
+        """
+        Serie storica giornaliera EUR di `symbol` tra le due date (incluse), in
+        UNA sola chiamata (endpoint market_chart/range). Chiave: "YYYY-MM-DD".
+        Dizionario vuoto per token non mappati o in caso di errore.
+        """
+        coin_id = self.SYMBOL_TO_ID.get(str(symbol).upper())
+        if not coin_id:
+            return {}
+
+        def _ts(d):
+            if isinstance(d, datetime):
+                return int(d.replace(tzinfo=timezone.utc).timestamp())
+            return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
+
+        # margine di 2 giorni per coprire i bordi
+        frm = _ts(start_date) - 172800
+        to = _ts(end_date) + 172800
+        try:
+            resp = requests.get(
+                f"{self.BASE_URL}/coins/{coin_id}/market_chart/range",
+                params={"vs_currency": vs, "from": frm, "to": to},
+                timeout=self.REQUEST_TIMEOUT,
+                headers=self._headers,
+            )
+            payload = resp.json()
+            punti = payload.get("prices") or []
+        except Exception:
+            return {}
+
+        serie: Dict[str, float] = {}
+        for ts_ms, price in punti:
+            giorno = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            serie[giorno] = float(price)  # ultimo punto del giorno prevale
+        return serie
 
     def get_prices_for_year_bounds(
         self, symbols: List[str], year: int
