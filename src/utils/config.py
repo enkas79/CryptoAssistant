@@ -15,6 +15,8 @@ DEFAULT_CONFIG = {
     "default_currency": "EUR",
     "dust_threshold": 1.0,
     "dust_filter_enabled": True,
+    "cost_basis_method": "LIFO",  # LIFO (norma) o PMC (usato da molti CAF)
+    "dichiarante": {},            # anagrafica per la dichiarazione sostitutiva
 }
 
 

@@ -57,7 +57,8 @@ class TaxCalculator:
         self,
         country_code: str = "IT",
         historical_rates: Optional[Dict[str, float]] = None,
-        live_rate: float = 0.92
+        live_rate: float = 0.92,
+        cost_basis_method: Optional[str] = None,
     ):
         """
         Initialize the tax calculator for a specific country.
@@ -69,6 +70,10 @@ class TaxCalculator:
                 (all supported tax rules are EUR-denominated).
             live_rate (float): Fallback USD->EUR rate used when a transaction date
                 is not found in historical_rates.
+            cost_basis_method (Optional[str]): "LIFO", "FIFO" o "PMC" (media
+                ponderata statica). Se indicato sovrascrive il metodo previsto
+                dalla regola nazionale (per l'Italia il default e' LIFO, ma
+                molti CAF usano il PMC).
         """
         self.rules_manager = TaxRulesManager()
         self.rule: TaxRule = self.rules_manager.get_rule(country_code)
@@ -78,6 +83,9 @@ class TaxCalculator:
 
         self.historical_rates: Dict[str, float] = historical_rates or {}
         self.live_rate: float = live_rate
+        self._method_override: Optional[str] = None
+        if cost_basis_method:
+            self.set_cost_basis_method(cost_basis_method)
 
     def set_country(self, country_code: str) -> None:
         """
@@ -89,6 +97,21 @@ class TaxCalculator:
         self.rule = self.rules_manager.get_rule(country_code)
         if self.rule is None:
             raise ValueError(f"No tax rules found for country code: {country_code}")
+
+    def set_cost_basis_method(self, method: Optional[str]) -> None:
+        """Imposta il metodo di calcolo del costo: "LIFO", "FIFO" o "PMC".
+        None ripristina il metodo previsto dalla regola nazionale."""
+        if method is None:
+            self._method_override = None
+            return
+        m = str(method).upper()
+        if m not in ("LIFO", "FIFO", "PMC"):
+            raise ValueError(f"Metodo costo base non valido: {method}")
+        self._method_override = m
+
+    def _cost_basis_method(self) -> str:
+        """Metodo effettivo: override esplicito se impostato, altrimenti la regola."""
+        return self._method_override or getattr(self.rule, "cost_basis_method", "FIFO")
 
     def _effective_rate_and_threshold(self, year: int) -> Tuple[float, float]:
         """
@@ -320,7 +343,7 @@ class TaxCalculator:
         Returns:
             List[TaxableEvent]: Eventi tassabili (vendite con lotti abbinati).
         """
-        method = getattr(self.rule, 'cost_basis_method', 'FIFO').upper()
+        method = self._cost_basis_method().upper()
         taxable_events: List[TaxableEvent] = []
 
         for token in df['Token'].unique():
@@ -329,6 +352,31 @@ class TaxCalculator:
 
             buy_list = token_df[token_df['Type'] == 'buy'].to_dict('records')
             sell_list = token_df[token_df['Type'] == 'sell'].to_dict('records')
+
+            if method == 'PMC':
+                # Media ponderata statica: prezzo medio di carico su tutti gli
+                # acquisti valorizzati fino alla data della vendita (nessun
+                # "consumo" dei lotti), applicato a ogni cessione. E' il criterio
+                # usato in pratica da diversi CAF.
+                for sell in sell_list:
+                    sell_date = sell['Date (UTC+1:00)']
+                    precedenti = [b for b in buy_list if b['Date (UTC+1:00)'] <= sell_date]
+                    qta_tot = sum(b['Amount'] for b in precedenti)
+                    if qta_tot <= 0:
+                        continue
+                    costo_tot = sum(b['Amount'] * b['Price'] + b.get('Fee', 0) for b in precedenti)
+                    pmc = costo_tot / qta_tot
+                    taxable_events.append(TaxableEvent(
+                        date=sell_date,
+                        token=token,
+                        amount=sell['Amount'],
+                        buy_price=pmc,
+                        sell_price=sell['Price'],
+                        gain=(sell['Price'] - pmc) * sell['Amount'],
+                        fee=sell.get('Fee', 0),
+                        holding_days=0,
+                    ))
+                continue
 
             for sell in sell_list:
                 sell_date = sell['Date (UTC+1:00)']
@@ -617,7 +665,7 @@ class TaxCalculator:
         return {
             "country": result.country,
             "year": result.year,
-            "cost_basis_method": getattr(self.rule, "cost_basis_method", "FIFO"),
+            "cost_basis_method": self._cost_basis_method(),
             "capital_gain": round(result.capital_gain, 2),
             "capital_gain_tax": round(result.capital_gain_tax, 2),
             "stamp_duty": round(result.stamp_duty, 2),
