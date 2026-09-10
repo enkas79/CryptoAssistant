@@ -348,5 +348,7 @@ class FiscalReportGenerator:
             return True
 
         except Exception as e:
+            # Rilancia: il chiamante mostra il messaggio d'errore reale invece
+            # di un generico "Errore nella generazione".
             print(f"Errore generazione PDF fiscale: {e}")
-            return False
+            raise

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from utils.dichiarazione import (
     Anagrafica, AssetRW, genera_dichiarazione_docx, dati_da_summary,
 )
+from utils.paths import default_save_path, remember_save_dir, ensure_ext
 
 _CAMPI_ANAGRAFICA = [
     ("nome", "Cognome e nome"),
@@ -163,16 +164,21 @@ class DichiarazioneDialog(QDialog):
             QMessageBox.warning(self, "Dati mancanti", "Inserisci almeno cognome/nome e codice fiscale.")
             return
 
-        self._config["dichiarante"] = dati
         from utils.config import save_config
+        self._config["dichiarante"] = dati
         save_config(self._config)
 
         anno = int(self._summary.get("year"))
         path, _ = QFileDialog.getSaveFileName(
-            self, "Salva dichiarazione", f"Dichiarazione_cripto_{anno}.docx", "Word (*.docx)"
+            self, "Salva dichiarazione",
+            default_save_path(self._config, f"Dichiarazione_cripto_{anno}.docx"),
+            "Word (*.docx)"
         )
         if not path:
             return
+        path = ensure_ext(path, 'docx')
+        remember_save_dir(self._config, path)
+        save_config(self._config)
 
         ok = genera_dichiarazione_docx(
             Anagrafica(**dati), self._leggi_assets(), self._vendite, anno, path

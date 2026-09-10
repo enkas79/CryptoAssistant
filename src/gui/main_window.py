@@ -50,6 +50,7 @@ from api.coingecko import CoinGeckoAPI
 from api.historical_prices import ChainedHistoricalPrices
 from api.frankfurter import HistoricalRatesWorker, get_live_exchange_rate
 from utils.config import save_config, get_user_data_dir
+from utils.paths import default_save_path, remember_save_dir, ensure_ext
 from utils.currency import CurrencyConverter
 from utils.dates import parse_dates_safe
 from utils.calculations import (
@@ -112,8 +113,9 @@ class TradingTerminalWindow(QMainWindow):
         self.tax_calculator = TaxCalculator(country_code="IT", historical_rates=self.tassi_storici)
         self.tax_calculator.set_cost_basis_method(self.config.get("cost_basis_method") or None)
         # Quotazioni storiche 1/1 e 31/12 valorizzate a mano nel dialog Quadro RW,
-        # riusate dal report PDF: {anno: (prezzi_inizio, prezzi_fine)}
-        self._rw_prezzi: Dict[int, tuple] = {}
+        # riusate dal report PDF e dalla dichiarazione: {anno: (prezzi_inizio, prezzi_fine)}.
+        # Persistite in config per non doverle reinserire a ogni avvio.
+        self._rw_prezzi: Dict[int, tuple] = self._carica_rw_prezzi()
 
         # Initialize UI
         self.initUI()
@@ -775,10 +777,40 @@ class TradingTerminalWindow(QMainWindow):
             QMessageBox.information(self, "Quadro RW", f"Nessuna cripto-attività detenuta nel {year}.")
             return
 
-        dialog = QuadroRWDialog(bounds, year, price_provider=self._provider_prezzi_storici(), parent=self)
+        dialog = QuadroRWDialog(
+            bounds, year, price_provider=self._provider_prezzi_storici(),
+            prefill=self._rw_prezzi.get(year), parent=self,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._rw_prezzi[year] = dialog.prezzi()
+            self._salva_rw_prezzi()
             self.calcola_tasse()
+
+    def _carica_rw_prezzi(self) -> Dict[int, tuple]:
+        """Rilegge da config le quotazioni RW salvate: {anno: (start, end)}."""
+        out: Dict[int, tuple] = {}
+        for anno, d in (self.config.get("rw_prezzi") or {}).items():
+            try:
+                out[int(anno)] = (dict(d.get("start", {})), dict(d.get("end", {})))
+            except (ValueError, TypeError, AttributeError):
+                continue
+        return out
+
+    def _salva_rw_prezzi(self) -> None:
+        """Persiste in config le quotazioni RW valorizzate a mano."""
+        self.config["rw_prezzi"] = {
+            str(anno): {"start": s or {}, "end": e or {}}
+            for anno, (s, e) in self._rw_prezzi.items()
+        }
+        save_config(self.config)
+
+    def _percorso_salvataggio(self, nome_file: str) -> str:
+        """Percorso iniziale per una finestra 'Salva con nome' (default: Download)."""
+        return default_save_path(self.config, nome_file)
+
+    def _ricorda_cartella(self, path: str) -> None:
+        remember_save_dir(self.config, path)
+        save_config(self.config)
 
     def _provider_prezzi_storici(self) -> ChainedHistoricalPrices:
         """Provider quotazioni storiche: CoinMarketCap (API key utente) con
@@ -876,10 +908,13 @@ class TradingTerminalWindow(QMainWindow):
         year = int(self.combo_anno_tasse.currentText())
 
         path, _ = QFileDialog.getSaveFileName(
-            self, "Salva Report Fiscale", f"Report_Fiscale_{year}.pdf", "PDF (*.pdf)"
+            self, "Salva Report Fiscale",
+            self._percorso_salvataggio(f"Report_Fiscale_{year}.pdf"), "PDF (*.pdf)"
         )
         if not path:
             return
+        path = ensure_ext(path, 'pdf')
+        self._ricorda_cartella(path)
 
         try:
             prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
@@ -916,7 +951,10 @@ class TradingTerminalWindow(QMainWindow):
 
     def importa_files(self):
         """Import CSV files with transactions."""
-        paths, _ = QFileDialog.getOpenFileNames(self, "Seleziona CSV", "", "CSV Files (*.csv)")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleziona CSV", os.path.dirname(self._percorso_salvataggio("x")),
+            "CSV Files (*.csv)"
+        )
         if not paths:
             return
 
@@ -1384,10 +1422,13 @@ class TradingTerminalWindow(QMainWindow):
     def _stampa_riepilogo_asset(self, token: str):
         """Genera un PDF con il solo estratto conto dell'asset selezionato."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Salva Riepilogo", f"Riepilogo_{token}.pdf", "PDF (*.pdf)"
+            self, "Salva Riepilogo",
+            self._percorso_salvataggio(f"Riepilogo_{token}.pdf"), "PDF (*.pdf)"
         )
         if not path:
             return
+        path = ensure_ext(path, 'pdf')
+        self._ricorda_cartella(path)
 
         df_token = self.df_master[self.df_master['Token'] == token]
         generator = FiscalReportGenerator(
@@ -1492,10 +1533,13 @@ class TradingTerminalWindow(QMainWindow):
         
         # Get output path
         path, _ = QFileDialog.getSaveFileName(
-            self, "Salva Report", "Report_Fiscale.pdf", "PDF (*.pdf)"
+            self, "Salva Report",
+            self._percorso_salvataggio("Report_Fiscale.pdf"), "PDF (*.pdf)"
         )
         if not path:
             return
+        path = ensure_ext(path, 'pdf')
+        self._ricorda_cartella(path)
         
         # Generate PDF
         generator = FiscalReportGenerator(
