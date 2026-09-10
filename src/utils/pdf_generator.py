@@ -8,11 +8,52 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import pandas as pd
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
+
+# Larghezza dell'area stampabile in un A4 con i margini di default di fpdf2 (10 mm).
+CONTENT_W = 190
+
+_CHAR_MAP = {
+    "–": "-", "—": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", " ": " ",
+}
 
 
 def _pdf_safe(text) -> str:
-    """Rende una stringa compatibile col font core latin-1 di fpdf2 (niente €, emoji, ecc.)."""
-    return str(text).encode('latin-1', 'replace').decode('latin-1').replace('?', '')
+    """Rende una stringa compatibile col font core latin-1 di fpdf2.
+
+    Sostituisce i caratteri fuori latin-1 piu' comuni (euro, trattini lunghi,
+    virgolette curve, puntini di sospensione) e rimpiazza gli altri con '?'
+    invece di eliminarli, cosi' le parole non vengono troncate.
+    """
+    s = str(text)
+    for src, dst in _CHAR_MAP.items():
+        s = s.replace(src, dst)
+    s = s.replace("€", "EUR ")
+    return s.encode('latin-1', 'replace').decode('latin-1')
+
+
+def _fit(pdf: FPDF, text: str, width: float) -> str:
+    """Accorcia `text` con '...' finche' non rientra in `width` mm alla larghezza
+    corrente del font (evita che il testo sbordi dalle celle a larghezza fissa)."""
+    text = _pdf_safe(text)
+    if pdf.get_string_width(text) <= width - 2:
+        return text
+    ell = "..."
+    while text and pdf.get_string_width(text + ell) > width - 2:
+        text = text[:-1]
+    return text + ell if text else ell
+
+
+def _line(pdf: FPDF, text: str, h: float = 6, bold: bool = False, size: int = 10) -> None:
+    """Riga di testo a piena larghezza che va sempre a capo correttamente.
+
+    Riporta sempre X al margine sinistro prima di scrivere: `multi_cell`
+    consecutive in fpdf2 lasciano il cursore a destra e la chiamata successiva
+    stampa fuori pagina troncando la riga."""
+    pdf.set_font("Helvetica", "B" if bold else "", size)
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(0, h, _pdf_safe(text), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 class FiscalReportGenerator:
@@ -148,10 +189,8 @@ class FiscalReportGenerator:
                     pdf.cell(30, 7, f"{price_hist:,.4f}", 1)
                     pdf.cell(30, 7, f"{val_tot_riga:,.2f}", 1)
                     
-                    # Handle notes (sanitize for PDF)
-                    note_orig = str(row.get('Notes', ''))
-                    note_safe = note_orig.encode('latin-1', 'replace').decode('latin-1').replace('?', '')
-                    pdf.cell(60, 7, note_safe[:30], 1, ln=True)
+                    # Note: accorciate con "..." se non stanno nella colonna
+                    pdf.cell(60, 7, _fit(pdf, str(row.get('Notes', '')), 60), 1, ln=True)
                 
                 # Summary
                 pdf.ln(10)
@@ -193,154 +232,117 @@ class FiscalReportGenerator:
         """
         try:
             pdf = FPDF()
+            pdf.set_auto_page_break(True, margin=15)
             pdf.add_page()
 
-            pdf.set_font("Arial", "B", 16)
-            pdf.cell(190, 10, _pdf_safe(f"REPORT FISCALE {tax_summary['year']} - {tax_summary['country']}"), ln=True)
-            pdf.ln(4)
+            def riga_tabella(valori, larghezze, h=7, header=False, align=None):
+                """Una riga di tabella: ogni cella accorciata per stare nella
+                sua colonna, l'ultima chiude la riga (ritorno a capo)."""
+                pdf.set_font("Helvetica", "B" if header else "", 8)
+                if pdf.get_y() > 275:
+                    pdf.add_page()
+                n = len(valori)
+                for i, (v, w) in enumerate(zip(valori, larghezze)):
+                    ultima = i == n - 1
+                    pdf.cell(
+                        w, h, _fit(pdf, v, w), border=1,
+                        align=(align[i] if align else "L"),
+                        new_x=(XPos.LMARGIN if ultima else XPos.RIGHT),
+                        new_y=(YPos.NEXT if ultima else YPos.TOP),
+                    )
 
             rule = tax_summary["rule"]
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(190, 8, "RIEPILOGO", ln=True)
-            pdf.set_font("Arial", "", 10)
-            pdf.cell(190, 7, f"Plusvalenze totali: EUR {tax_summary['capital_gain']:,.2f}", ln=True)
-            pdf.cell(190, 7, _pdf_safe(
-                f"Aliquota applicata: {rule['capital_gain_rate']} (franchigia: {rule['capital_gain_threshold']})"
-            ), ln=True)
-            pdf.cell(190, 7, f"Imposta su plusvalenze: EUR {tax_summary['capital_gain_tax']:,.2f}", ln=True)
-            pdf.cell(190, 7, f"Imposta di bollo: EUR {tax_summary['stamp_duty']:,.2f}", ln=True)
-            pdf.set_font("Arial", "B", 10)
-            pdf.cell(190, 8, f"TOTALE IMPOSTE DOVUTE: EUR {tax_summary['total_tax']:,.2f}", ln=True)
-            pdf.set_font("Arial", "", 10)
+            _line(pdf, f"REPORT FISCALE {tax_summary['year']} - {tax_summary['country']}", h=10, bold=True, size=16)
+            pdf.ln(2)
+
+            _line(pdf, "RIEPILOGO", h=8, bold=True, size=12)
+            _line(pdf, f"Plusvalenze totali: EUR {tax_summary['capital_gain']:,.2f}", h=6)
+            _line(pdf, f"Aliquota applicata: {rule['capital_gain_rate']} (franchigia: {rule['capital_gain_threshold']})", h=6)
+            _line(pdf, f"Imposta su plusvalenze: EUR {tax_summary['capital_gain_tax']:,.2f}", h=6)
+            _line(pdf, f"Imposta di bollo: EUR {tax_summary['stamp_duty']:,.2f}", h=6)
+            _line(pdf, f"TOTALE IMPOSTE DOVUTE: EUR {tax_summary['total_tax']:,.2f}", h=7, bold=True)
 
             if tax_summary["declaration_required"]:
-                pdf.ln(2)
-                pdf.cell(190, 7, _pdf_safe(
-                    f"Dichiarazione RW obbligatoria (soglia {rule['declaration_threshold']})."
-                ), ln=True)
+                _line(pdf, f"Dichiarazione RW obbligatoria (soglia {rule['declaration_threshold']}).", h=6)
 
             if tax_summary["notes"]:
-                pdf.ln(4)
-                pdf.set_font("Arial", "B", 11)
-                pdf.cell(190, 7, "Note:", ln=True)
-                pdf.set_font("Arial", "", 9)
+                pdf.ln(2)
+                _line(pdf, "Note:", h=6, bold=True, size=11)
                 for note in tax_summary["notes"]:
-                    pdf.multi_cell(190, 6, _pdf_safe(f"- {note}"))
+                    _line(pdf, f"- {note}", h=5, size=9)
 
             metodo = tax_summary.get("cost_basis_method", "FIFO")
 
             quadro_rw = tax_summary.get("quadro_rw", [])
             if quadro_rw:
-                pdf.ln(6)
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(190, 8, _pdf_safe("QUADRO RW - MONITORAGGIO CRIPTO-ATTIVITA"), ln=True)
-                pdf.set_font("Arial", "", 9)
-                pdf.cell(190, 6, _pdf_safe(
-                    "Valori in EUR. Imposta cripto-attivita 0,2% sul valore finale, pro-rata giorni."
-                ), ln=True)
+                pdf.ln(4)
+                _line(pdf, "QUADRO RW - MONITORAGGIO CRIPTO-ATTIVITA", h=8, bold=True, size=12)
+                _line(pdf, "Valori in EUR. Imposta cripto-attivita 0,2% sul valore finale, pro-rata giorni.", h=5, size=9)
                 pdf.ln(1)
 
-                pdf.set_font("Arial", "B", 8)
-                pdf.cell(22, 8, "Token", 1)
-                pdf.cell(28, 8, "Qta iniziale", 1)
-                pdf.cell(28, 8, "Val. iniziale", 1)
-                pdf.cell(28, 8, "Qta finale", 1)
-                pdf.cell(28, 8, "Val. finale", 1)
-                pdf.cell(16, 8, "Giorni", 1)
-                pdf.cell(22, 8, "Imposta", 1, ln=True)
-
-                pdf.set_font("Arial", "", 8)
+                w_rw = [20, 30, 30, 30, 30, 16, 24]
+                riga_tabella(
+                    ["Token", "Qta iniziale", "Val. iniziale", "Qta finale", "Val. finale", "Giorni", "Imposta"],
+                    w_rw, h=8, header=True,
+                )
                 for r in quadro_rw:
-                    if pdf.get_y() > 265:
-                        pdf.add_page()
-                    pdf.cell(22, 7, _pdf_safe(r["token"])[:10], 1)
-                    pdf.cell(28, 7, f"{r['quantita_iniziale']:.6f}", 1)
-                    pdf.cell(28, 7, f"{r['valore_iniziale']:,.2f}", 1)
-                    pdf.cell(28, 7, f"{r['quantita_finale']:.6f}", 1)
-                    pdf.cell(28, 7, f"{r['valore_finale']:,.2f}", 1)
-                    pdf.cell(16, 7, str(r["giorni_possesso"]), 1)
-                    pdf.cell(22, 7, f"{r['ivafe']:,.2f}", 1, ln=True)
+                    riga_tabella([
+                        r["token"],
+                        f"{r['quantita_iniziale']:.6f}",
+                        f"{r['valore_iniziale']:,.2f}",
+                        f"{r['quantita_finale']:.6f}",
+                        f"{r['valore_finale']:,.2f}",
+                        str(r["giorni_possesso"]),
+                        f"{r['ivafe']:,.2f}",
+                    ], w_rw)
 
-                pdf.set_font("Arial", "B", 9)
-                pdf.cell(190, 8, _pdf_safe(
-                    f"Imposta cripto-attivita totale: EUR {tax_summary.get('imposta_cripto_totale', 0):,.2f}"
-                ), ln=True)
-                pdf.set_font("Arial", "", 8)
+                _line(pdf, f"Imposta cripto-attivita totale: EUR {tax_summary.get('imposta_cripto_totale', 0):,.2f}", h=7, bold=True, size=9)
                 for r in quadro_rw:
                     if r.get("note"):
-                        pdf.multi_cell(190, 5, _pdf_safe(f"- {r['token']}: {r['note']}"))
+                        _line(pdf, f"- {r['token']}: {r['note']}", h=5, size=8)
 
             zero_rows = tax_summary.get("zero_price_rows", [])
             if zero_rows:
-                pdf.ln(4)
-                pdf.set_font("Arial", "B", 10)
-                pdf.cell(190, 7, _pdf_safe("RIGHE DA VERIFICARE (acquisti senza prezzo)"), ln=True)
-                pdf.set_font("Arial", "", 8)
-                pdf.multi_cell(190, 5, _pdf_safe(
-                    "Reward/airdrop/cashback o trasferimenti non valorizzati: assegnare il valore "
-                    "EUR alla ricezione (proventi) o il costo originario (trasferimenti)."
-                ))
+                pdf.ln(3)
+                _line(pdf, "RIGHE DA VERIFICARE (acquisti senza prezzo)", h=6, bold=True)
+                _line(pdf, "Reward/airdrop/cashback o trasferimenti non valorizzati: assegnare il "
+                           "valore EUR alla ricezione (proventi) o il costo originario (trasferimenti).", h=5, size=8)
                 for z in zero_rows:
-                    pdf.multi_cell(190, 5, _pdf_safe(
-                        f"- {z['date']} {z['token']} {z['amount']:.6f} {z.get('notes', '')}"
-                    ))
+                    _line(pdf, f"- {z['date']} {z['token']} {z['amount']:.6f} {z.get('notes', '')}".rstrip(), h=5, size=8)
 
             taxable_transactions = tax_summary.get("taxable_transactions", [])
             if taxable_transactions:
-                pdf.ln(6)
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(190, 8, _pdf_safe(
-                    f"QUADRO RT - DETTAGLIO PLUSVALENZE/MINUSVALENZE ({metodo})"
-                ), ln=True)
-
-                pdf.set_font("Arial", "B", 8)
-                pdf.cell(25, 8, "Data", 1)
-                pdf.cell(25, 8, "Token", 1)
-                pdf.cell(25, 8, "Qta", 1)
-                pdf.cell(30, 8, "Pr. Acquisto", 1)
-                pdf.cell(30, 8, "Pr. Vendita", 1)
-                pdf.cell(30, 8, "Plusvalenza", 1, ln=True)
-
-                pdf.set_font("Arial", "", 8)
-                for event in taxable_transactions:
-                    if pdf.get_y() > 270:
-                        pdf.add_page()
-                    pdf.cell(25, 7, str(event["date"]), 1)
-                    pdf.cell(25, 7, str(event["token"])[:10], 1)
-                    pdf.cell(25, 7, f"{event['amount']:.6f}", 1)
-                    pdf.cell(30, 7, f"{event['buy_price']:,.4f}", 1)
-                    pdf.cell(30, 7, f"{event['sell_price']:,.4f}", 1)
-                    pdf.cell(30, 7, f"{event['gain']:,.2f}", 1, ln=True)
+                pdf.ln(4)
+                _line(pdf, f"QUADRO RT - DETTAGLIO PLUSVALENZE/MINUSVALENZE ({metodo})", h=8, bold=True, size=12)
+                w_rt = [28, 26, 28, 34, 34, 32]
+                riga_tabella(
+                    ["Data", "Token", "Qta", "Pr. Acquisto", "Pr. Vendita", "Plusvalenza"],
+                    w_rt, h=8, header=True,
+                )
+                for e in taxable_transactions:
+                    riga_tabella([
+                        str(e["date"]), str(e["token"]), f"{e['amount']:.6f}",
+                        f"{e['buy_price']:,.4f}", f"{e['sell_price']:,.4f}", f"{e['gain']:,.2f}",
+                    ], w_rt)
 
             all_transactions = tax_summary.get("all_transactions", [])
             if all_transactions:
                 pdf.add_page()
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(190, 8, "DETTAGLIO DI TUTTE LE COMPRAVENDITE DELL'ANNO", ln=True)
-                pdf.set_font("Arial", "", 9)
-                pdf.cell(190, 6, "Include acquisti, vendite e swap crypto/crypto (registrati come vendita + acquisto).", ln=True)
-                pdf.ln(2)
+                _line(pdf, "DETTAGLIO DI TUTTE LE COMPRAVENDITE DELL'ANNO", h=8, bold=True, size=12)
+                _line(pdf, "Include acquisti, vendite e swap crypto/crypto (registrati come vendita + acquisto).", h=5, size=9)
+                pdf.ln(1)
 
-                pdf.set_font("Arial", "B", 8)
-                pdf.cell(22, 8, "Data", 1)
-                pdf.cell(18, 8, "Token", 1)
-                pdf.cell(15, 8, "Tipo", 1)
-                pdf.cell(25, 8, "Qta", 1)
-                pdf.cell(25, 8, "Prezzo", 1)
-                pdf.cell(25, 8, f"Totale ({self.valuta_pdf})", 1)
-                pdf.cell(60, 8, "Note", 1, ln=True)
-
-                pdf.set_font("Arial", "", 8)
+                w_all = [22, 16, 12, 24, 26, 24, 66]
+                riga_tabella(
+                    ["Data", "Token", "Tipo", "Qta", "Prezzo", f"Totale ({self.valuta_pdf})", "Note"],
+                    w_all, h=8, header=True,
+                )
                 for tx in all_transactions:
-                    if pdf.get_y() > 270:
-                        pdf.add_page()
-                    pdf.cell(22, 7, str(tx["date"]), 1)
-                    pdf.cell(18, 7, _pdf_safe(tx["token"])[:8], 1)
-                    pdf.cell(15, 7, str(tx["type"])[:4], 1)
-                    pdf.cell(25, 7, f"{tx['amount']:.6f}", 1)
-                    pdf.cell(25, 7, f"{tx['price']:,.4f}", 1)
-                    pdf.cell(25, 7, f"{tx['total']:,.2f}", 1)
-                    pdf.cell(60, 7, _pdf_safe(tx.get("notes", ""))[:30], 1, ln=True)
+                    riga_tabella([
+                        str(tx["date"]), str(tx["token"]), str(tx["type"]),
+                        f"{tx['amount']:.6f}", f"{tx['price']:,.4f}", f"{tx['total']:,.2f}",
+                        str(tx.get("notes", "")),
+                    ], w_all)
 
             pdf.output(output_path)
             return True
