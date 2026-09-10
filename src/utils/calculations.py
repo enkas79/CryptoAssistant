@@ -77,6 +77,123 @@ def _cost_basis_and_quantity(
     return max(quantity, 0.0), max(cost_basis, 0.0)
 
 
+def calculate_cmc_style_stats(
+    df_token: pd.DataFrame,
+    live_price: float,
+    exchange_rate: float,
+    currency: str = "EUR",
+    rate_for_date: Optional[Callable] = None,
+) -> Dict[str, float]:
+    """
+    Statistiche di un token con lo stesso metodo del portafoglio di
+    CoinMarketCap (vedi articolo ufficiale "How CMC Calculates Your Portfolio
+    Profits"):
+
+    - **media ponderata**, ma il costo base NON viene ridotto dalle vendite;
+    - P/L = realizzato + non realizzato (all-time), non solo il non realizzato
+      sul posseduto attuale;
+    - percentuale calcolata sul costo base totale.
+
+    Formule:
+        Costo base       = Σ(prezzo_acq × qta_acq) + Σ(fee_acq)
+        Prezzo medio     = Costo base / Σ(qta_acq)
+        Realizzato       = Σ(prezzo_ven × qta_ven) − Prezzo medio × Σ(qta_ven) − Σ(fee_ven)
+        Non realizzato   = (prezzo_corrente − Prezzo medio) × qta_posseduta
+        P/L totale       = Realizzato + Non realizzato
+        P/L %            = P/L totale / Costo base
+
+    Le righe di vendita a prezzo 0 (trasferimenti tra wallet) riducono la
+    quantità posseduta ma non entrano nel realizzato. Gli acquisti a prezzo 0
+    (reward/airdrop non ancora valorizzati) abbassano il prezzo medio finché
+    non vengono rivalutati.
+
+    Returns:
+        Dict con quantity, avg_buy_price, cost_basis, realized_pl,
+        unrealized_pl, current_value, total_pl, total_pl_pct.
+    """
+    df = df_token
+    mult = exchange_rate if currency == "EUR" else 1.0
+
+    cost_basis = 0.0
+    total_buy_amount = 0.0
+    total_sell_amount = 0.0
+    proceeds = 0.0
+    sell_fees = 0.0
+    priced_sell_amount = 0.0
+
+    for _, row in df.iterrows():
+        amount = row['Amount']
+        price = row['Price']
+        tx_type = str(row['Type']).lower()
+        orig_curr = str(row.get('Original Currency', 'EUR'))
+        rate = _rate_for_row(row, exchange_rate, rate_for_date) if (
+            currency == "EUR" and orig_curr == "USD"
+        ) else 1.0
+
+        if tx_type == 'buy':
+            cost_basis += (amount * price * rate) + (row['Fee'] * rate)
+            total_buy_amount += amount
+        elif tx_type == 'sell':
+            total_sell_amount += amount
+            if price > 0:
+                proceeds += amount * price * rate
+                sell_fees += row['Fee'] * rate
+                priced_sell_amount += amount
+
+    avg_buy_price = (cost_basis / total_buy_amount) if total_buy_amount > 0 else 0.0
+    realized_pl = proceeds - (avg_buy_price * priced_sell_amount) - sell_fees
+
+    quantity = max(total_buy_amount - total_sell_amount, 0.0)
+    price_eur = (live_price or 0.0) * mult
+    current_value = quantity * price_eur
+    unrealized_pl = (price_eur - avg_buy_price) * quantity
+
+    total_pl = realized_pl + unrealized_pl
+    total_pl_pct = (total_pl / cost_basis * 100) if cost_basis > 0 else 0.0
+
+    return {
+        'quantity': quantity,
+        'avg_buy_price': avg_buy_price,
+        'cost_basis': cost_basis,
+        'realized_pl': realized_pl,
+        'unrealized_pl': unrealized_pl,
+        'current_value': current_value,
+        'total_pl': total_pl,
+        'total_pl_pct': total_pl_pct,
+    }
+
+
+def calculate_portfolio_cmc_style(
+    df: pd.DataFrame,
+    live_prices: Dict[str, float],
+    exchange_rate: float,
+    currency: str = "EUR",
+    rate_for_date: Optional[Callable] = None,
+) -> Dict[str, float]:
+    """
+    Aggrega `calculate_cmc_style_stats` su tutto il portafoglio.
+
+    Returns:
+        Dict con cost_basis, realized_pl, unrealized_pl, current_value,
+        total_pl, total_pl_pct (percentuale sul costo base complessivo).
+    """
+    tot = {
+        'cost_basis': 0.0, 'realized_pl': 0.0, 'unrealized_pl': 0.0,
+        'current_value': 0.0, 'total_pl': 0.0,
+    }
+    for token in df['Token'].unique():
+        s = calculate_cmc_style_stats(
+            df[df['Token'] == token], live_prices.get(token, 0) or 0,
+            exchange_rate, currency, rate_for_date,
+        )
+        for k in tot:
+            tot[k] += s[k]
+    tot['total_pl_pct'] = (
+        tot['total_pl'] / tot['cost_basis'] * 100 if tot['cost_basis'] > 0 else 0.0
+    )
+    return tot
+
+
 def calculate_portfolio_allocation(
     df: pd.DataFrame,
     live_prices: Dict[str, float],

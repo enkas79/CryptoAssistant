@@ -15,6 +15,35 @@ class ChainedHistoricalPrices:
     def __init__(self, providers: List[object]):
         self._providers = list(providers)
 
+    def get_price_series(self, symbol: str, start_date, end_date) -> Dict[str, float]:
+        """Serie giornaliera unendo i provider (il primo che copre un giorno vince)."""
+        serie: Dict[str, float] = {}
+        for provider in self._providers:
+            fn = getattr(provider, "get_price_series", None)
+            if fn is None:
+                continue
+            try:
+                parziale = fn(symbol, start_date, end_date) or {}
+            except Exception:
+                parziale = {}
+            for giorno, prezzo in parziale.items():
+                serie.setdefault(giorno, prezzo)
+        return serie
+
+    def get_historical_price(self, symbol: str, on_date):
+        """Prezzo di `symbol` alla data: primo provider che lo restituisce."""
+        for provider in self._providers:
+            fn = getattr(provider, "get_historical_price", None)
+            if fn is None:
+                continue
+            try:
+                price = fn(symbol, on_date)
+            except Exception:
+                continue
+            if price is not None:
+                return price
+        return None
+
     def get_prices_for_year_bounds(
         self, symbols: List[str], year: int
     ) -> Tuple[Dict[str, float], Dict[str, float]]:

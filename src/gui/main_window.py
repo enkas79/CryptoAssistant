@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFileDialog,
     QComboBox, QFrame, QGroupBox, QGridLayout, QInputDialog, QDateEdit,
     QCheckBox, QStackedWidget, QProgressBar, QApplication, QScrollArea,
-    QMainWindow, QDialog
+    QMainWindow, QDialog, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QAction
@@ -57,12 +57,15 @@ from utils.calculations import (
     calculate_token_stats,
     calculate_target_quantity,
     calculate_performance,
-    calculate_invested_over_time
+    calculate_invested_over_time,
+    calculate_cmc_style_stats,
+    calculate_portfolio_cmc_style,
 )
 from utils.pdf_generator import FiscalReportGenerator
 from utils.tax_calculator import TaxCalculator
 from utils.updater import UpdateCheckWorker, UpdateDownloadWorker, avvia_installer_e_esci
 from gui.quadro_rw_dialog import QuadroRWDialog
+from utils.reprice import RepriceWorker
 
 
 class TradingTerminalWindow(QMainWindow):
@@ -360,6 +363,12 @@ class TradingTerminalWindow(QMainWindow):
         info_layout.addWidget(self.label_val_att_perf, 1, 1)
         layout_perf.addWidget(self.label_titolo_perf)
         layout_perf.addLayout(info_layout)
+
+        self.label_pl_cmc = QLabel("")
+        self.label_pl_cmc.setWordWrap(True)
+        self.label_pl_cmc.setStyleSheet("font-size: 12px; color: #555; margin-top: 4px;")
+        layout_perf.addWidget(self.label_pl_cmc)
+
         self.group_perf.setLayout(layout_perf)
         sidebar.addWidget(self.group_perf)
 
@@ -463,6 +472,15 @@ class TradingTerminalWindow(QMainWindow):
         azione_soglia_dust = QAction("Imposta soglia dust...", self)
         azione_soglia_dust.triggered.connect(self._imposta_soglia_dust)
         menu_impostazioni.addAction(azione_soglia_dust)
+
+        menu_impostazioni.addSeparator()
+        azione_riprezza = QAction("Ricalcola prezzi storici transazioni...", self)
+        azione_riprezza.triggered.connect(self._ricalcola_prezzi_storici)
+        menu_impostazioni.addAction(azione_riprezza)
+
+        azione_key_cg = QAction("Imposta API key CoinGecko (facoltativa)...", self)
+        azione_key_cg.triggered.connect(self._imposta_api_key_coingecko)
+        menu_impostazioni.addAction(azione_key_cg)
 
         menu_aiuto = self.menuBar().addMenu("&Aiuto")
 
@@ -701,15 +719,97 @@ class TradingTerminalWindow(QMainWindow):
             QMessageBox.information(self, "Quadro RW", f"Nessuna cripto-attività detenuta nel {year}.")
             return
 
-        data_dir = get_user_data_dir()
-        provider = ChainedHistoricalPrices([
-            CoinMarketCapAPI(self.cmc_api.api_key, cache_path=str(data_dir / "cmc_storico.json")),
-            CoinGeckoAPI(cache_path=str(data_dir / "coingecko_cache.json")),
-        ])
-        dialog = QuadroRWDialog(bounds, year, price_provider=provider, parent=self)
+        dialog = QuadroRWDialog(bounds, year, price_provider=self._provider_prezzi_storici(), parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._rw_prezzi[year] = dialog.prezzi()
             self.calcola_tasse()
+
+    def _provider_prezzi_storici(self) -> ChainedHistoricalPrices:
+        """Provider quotazioni storiche: CoinMarketCap (API key utente) con
+        fallback CoinGecko, entrambi con cache su file."""
+        data_dir = get_user_data_dir()
+        return ChainedHistoricalPrices([
+            CoinMarketCapAPI(self.cmc_api.api_key, cache_path=str(data_dir / "cmc_storico.json")),
+            CoinGeckoAPI(
+                cache_path=str(data_dir / "coingecko_cache.json"),
+                api_key=self.config.get("coingecko_api_key"),
+            ),
+        ])
+
+    def _imposta_api_key_coingecko(self):
+        """Salva la chiave demo gratuita di CoinGecko (alza i limiti di frequenza
+        per la rivalutazione dei prezzi storici)."""
+        attuale = self.config.get("coingecko_api_key") or ""
+        key, ok = QInputDialog.getText(
+            self, "API key CoinGecko",
+            "Chiave demo gratuita da coingecko.com (lascia vuoto per rimuoverla):",
+            text=attuale,
+        )
+        if not ok:
+            return
+        self.config["coingecko_api_key"] = key.strip() or None
+        save_config(self.config)
+        QMessageBox.information(self, "API key CoinGecko", "Chiave salvata.")
+
+    def _ricalcola_prezzi_storici(self):
+        """Ri-scarica i prezzi di mercato alla data delle transazioni per
+        correggere righe a prezzo 0 (reward/airdrop) o prezzi inaffidabili."""
+        if self.df_master is None or self.df_master.empty:
+            QMessageBox.warning(self, "Prezzi storici", "Nessun dato disponibile.")
+            return
+
+        mancanti = int((
+            (self.df_master['Type'].astype(str).str.lower() == 'buy')
+            & (self.df_master['Price'] <= 0)
+        ).sum())
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Ricalcola prezzi storici")
+        box.setText(
+            f"Acquisti senza prezzo da valorizzare: {mancanti}.\n\n"
+            "«Solo mancanti» valorizza solo quelle righe.\n"
+            "«Tutti» ri-scarica anche i prezzi degli acquisti/vendite già presenti "
+            "(più lento, sovrascrive i valori attuali)."
+        )
+        b_missing = box.addButton("Solo mancanti", QMessageBox.ButtonRole.AcceptRole)
+        b_all = box.addButton("Tutti", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked not in (b_missing, b_all):
+            return
+        mode = "all" if clicked is b_all else "missing"
+
+        prog = QProgressDialog("Scarico prezzi storici...", "Annulla", 0, 0, self)
+        prog.setWindowTitle("Prezzi storici")
+        prog.setMinimumDuration(0)
+        prog.setValue(0)
+
+        self._reprice_worker = RepriceWorker(self.df_master, self._provider_prezzi_storici(), mode)
+
+        def on_prog(fatte, totale):
+            prog.setMaximum(totale)
+            prog.setValue(fatte)
+
+        def on_done(df_out, report):
+            prog.close()
+            self.database.df = df_out
+            self.database.save()
+            self.df_master = self.database.get_dataframe()
+            self.aggiorna_vista()
+            msg = f"Righe aggiornate: {report['aggiornate']}."
+            if report['non_trovate']:
+                esempi = ", ".join(f"{t} {d}" for t, d in report['non_trovate'][:8])
+                msg += (
+                    f"\nPrezzo non trovato per {len(report['non_trovate'])} coppie "
+                    f"(da inserire a mano): {esempi}"
+                )
+            QMessageBox.information(self, "Prezzi storici", msg)
+
+        self._reprice_worker.progresso.connect(on_prog)
+        self._reprice_worker.finito.connect(on_done)
+        prog.canceled.connect(self._reprice_worker.requestInterruption)
+        self._reprice_worker.start()
 
     def genera_pdf_tasse_anno(self):
         """Genera il report fiscale PDF con il calcolo tasse dell'anno selezionato."""
@@ -1001,7 +1101,11 @@ class TradingTerminalWindow(QMainWindow):
                     self._pie_tokens = []
 
             self.canvas.draw()
-            self.aggiorna_performance_globale(tot_investito, tot_valore, simb)
+            cmc_tot = calculate_portfolio_cmc_style(
+                df_filtrato, self.prezzi_live, self.tasso_cambio_live, self.valuta,
+                rate_for_date=self.get_historical_rate,
+            )
+            self.aggiorna_performance_globale(tot_investito, tot_valore, simb, cmc=cmc_tot)
 
         # --- MODALITÀ SINGOLA MONETA ---
         else:
@@ -1077,7 +1181,11 @@ class TradingTerminalWindow(QMainWindow):
             valore_oggi = qta_tot * prezzo_mkt
             self.label_total_netto.setText(f"{valore_oggi:,.2f} {simb}")
 
-            self.aggiorna_performance_globale(investito_singolo, valore_oggi, simb)
+            cmc_tok = calculate_cmc_style_stats(
+                df_t, self.prezzi_live.get(selection, 0), self.tasso_cambio_live,
+                self.valuta, rate_for_date=self.get_historical_rate,
+            )
+            self.aggiorna_performance_globale(investito_singolo, valore_oggi, simb, cmc=cmc_tok)
 
     def _disegna_andamento(self, df, simb):
         """
@@ -1163,6 +1271,12 @@ class TradingTerminalWindow(QMainWindow):
         perc, diff = calculate_performance(stats['invested'], stats['current_value'])
         colore = "#28a745" if perc >= 0 else "#dc3545"
 
+        cmc = calculate_cmc_style_stats(
+            self.df_master[self.df_master['Token'] == token],
+            self.prezzi_live.get(token, 0), self.tasso_cambio_live, self.valuta,
+            rate_for_date=self.get_historical_rate,
+        )
+
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Riepilogo {token}")
         dialog.setMinimumWidth(360)
@@ -1186,9 +1300,19 @@ class TradingTerminalWindow(QMainWindow):
             griglia.addWidget(lbl_valore, r, 1)
         layout.addLayout(griglia)
 
-        lbl_perf = QLabel(f"Performance: {perc:+.2f}% ({diff:+,.2f} {simb})")
+        lbl_perf = QLabel(f"Performance (non realizzato): {perc:+.2f}% ({diff:+,.2f} {simb})")
         lbl_perf.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {colore}; margin-top: 10px;")
         layout.addWidget(lbl_perf)
+
+        col_cmc = "#28a745" if cmc['total_pl'] >= 0 else "#dc3545"
+        lbl_cmc = QLabel(
+            f"P/L stile CoinMarketCap: {cmc['total_pl']:+,.2f} {simb} ({cmc['total_pl_pct']:+.2f}%)\n"
+            f"realizzato {cmc['realized_pl']:+,.2f} · non realizzato {cmc['unrealized_pl']:+,.2f} · "
+            f"costo base {cmc['cost_basis']:,.2f} {simb}"
+        )
+        lbl_cmc.setWordWrap(True)
+        lbl_cmc.setStyleSheet(f"font-size: 12px; color: {col_cmc};")
+        layout.addWidget(lbl_cmc)
 
         pulsanti = QHBoxLayout()
         btn_stampa = QPushButton("🖨 Stampa / Esporta PDF")
@@ -1222,11 +1346,30 @@ class TradingTerminalWindow(QMainWindow):
         else:
             QMessageBox.critical(self, "Errore PDF", "Errore nella generazione del riepilogo.")
 
-    def aggiorna_performance_globale(self, investito, valore_attuale, simb):
-        """Update performance display."""
+    def aggiorna_performance_globale(self, investito, valore_attuale, simb, cmc=None):
+        """Update performance display.
+
+        `cmc` (opzionale): dict da calculate_cmc_style_stats/portfolio_cmc_style
+        per mostrare anche il P/L calcolato come CoinMarketCap (realizzato +
+        non realizzato, costo base non ridotto dalle vendite).
+        """
         self.label_invest_perf.setText(f"{investito:,.2f} {simb}")
         self.label_val_att_perf.setText(f"{valore_attuale:,.2f} {simb}")
-        
+
+        if cmc and cmc.get('cost_basis', 0) > 0:
+            col = "#28a745" if cmc['total_pl'] >= 0 else "#dc3545"
+            self.label_pl_cmc.setText(
+                f"<b>P/L stile CoinMarketCap:</b> "
+                f"<span style='color:{col}'>{cmc['total_pl']:+,.2f} {simb} "
+                f"({cmc['total_pl_pct']:+.2f}%)</span><br>"
+                f"<span style='color:#888'>realizzato {cmc['realized_pl']:+,.2f} · "
+                f"non realizzato {cmc['unrealized_pl']:+,.2f} · "
+                f"costo base {cmc['cost_basis']:,.2f} {simb}</span>"
+            )
+        else:
+            self.label_pl_cmc.setText("")
+
+
         if investito > 0:
             perc, diff = calculate_performance(investito, valore_attuale)
             colore = "#28a745" if perc >= 0 else "#dc3545"

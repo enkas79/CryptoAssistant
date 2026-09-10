@@ -11,6 +11,7 @@ from pathlib import Path
 
 DEFAULT_CONFIG = {
     "api_key": None,
+    "coingecko_api_key": None,  # chiave "demo" gratuita, facoltativa
     "default_currency": "EUR",
     "dust_threshold": 1.0,
     "dust_filter_enabled": True,
