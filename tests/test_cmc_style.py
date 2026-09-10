@@ -54,6 +54,26 @@ def test_trasferimento_in_uscita_non_crea_perdita_fittizia():
     assert s["total_pl"] == pytest.approx(0.0)
 
 
+def test_caso_di_validazione_ufficiale_cmc():
+    """Test case dalla specifica CMC.md (docs/calcolo_pl_coinmarketcap.md, §4)."""
+    # Nella specifica gli importi sono passati alle formule come Q*P (totale
+    # di riga): Buy 2 vale 6.000 in totale su 0,5 BTC -> prezzo unitario 12.000;
+    # Sell 1 incassa 12.000 su 0,75 BTC -> prezzo unitario 16.000.
+    df = _df([
+        ["2024-01-01", "BTC", "buy", 1.0, 10000.0, 50.0, "EUR"],
+        ["2024-02-01", "BTC", "buy", 0.5, 12000.0, 30.0, "EUR"],
+        ["2024-03-01", "BTC", "sell", 0.75, 16000.0, 60.0, "EUR"],
+    ])
+    s = calculate_cmc_style_stats(df, live_price=18000.0, exchange_rate=1.0)
+
+    assert s["cost_basis"] == pytest.approx(16080.0)
+    assert s["avg_buy_price"] == pytest.approx(10720.0)
+    assert s["realized_pl"] == pytest.approx(3900.0)
+    assert s["unrealized_pl"] == pytest.approx(5460.0)
+    assert s["total_pl"] == pytest.approx(9360.0)
+    assert s["total_pl_pct"] == pytest.approx(58.2089, abs=1e-3)
+
+
 def test_prezzo_live_convertito_da_usd_a_eur():
     df = _df([["2025-01-01", "ETH", "buy", 2.0, 1000.0, 0.0, "EUR"]])
     # live_price in USD, cambio 0.9 -> prezzo EUR 900, sotto il costo medio 1000

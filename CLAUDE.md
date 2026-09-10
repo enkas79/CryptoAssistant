@@ -46,3 +46,9 @@
 * **impeccable:** Applica i principi di design ed estetica visuale esclusivamente ai QSS (Qt Style Sheets), palette colori, spaziatura e tipografia dei componenti PyQt/PySide, evitando l'introduzione di pattern o tecnologie web.
 * **task-observer:** Monitora le correzioni e i workflow eseguiti per raffinare i comandi futuri senza richiedere conferme o generare log ridondanti.
 * **OmniRoute:** Se configurato come proxy per il fallback o modelli esterni, mantieni la compatibilità con le chiamate e le variabili d'ambiente standard definite.
+
+## 8. Motori di Calcolo (Portafoglio & Fisco)
+Due calcoli DISTINTI, non confonderli:
+* **P/L "stile CoinMarketCap"** (dashboard): Costo Medio Ponderato globale, costo base cumulativo NON ridotto dalle vendite, P/L = realizzato + non realizzato, % sul costo base totale. Specifica completa e caso di validazione in [`docs/calcolo_pl_coinmarketcap.md`](docs/calcolo_pl_coinmarketcap.md). Implementazione: `utils/calculations.py` (`calculate_cmc_style_stats`, `calculate_portfolio_cmc_style`), test `tests/test_cmc_style.py`.
+* **Dichiarazione fiscale (Italia)** in `utils/tax_calculator.py`: metodo **LIFO** obbligatorio (Circ. AdE 30/E/2023), commissioni non deducibili, Quadro RW + imposta cripto-attività 0,2%. NON usa il metodo CMC.
+* I prezzi storici delle transazioni si rivalutano via `utils/reprice.py` (CoinMarketCap → fallback CoinGecko); i CSV di alcuni wallet hanno prezzi inaffidabili (righe a 0, valori in USD).
