@@ -9,6 +9,7 @@ monitoraggio) con possibilita' di aggiungere righe per wallet non importati.
 
 from typing import Dict, List
 
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QDialogButtonBox, QHeaderView, QHBoxLayout, QGroupBox, QCheckBox,
@@ -32,14 +33,20 @@ _CAMPI_ANAGRAFICA = [
     ("data", "Data (firma)"),
 ]
 
-COL_DENOM, COL_WALLET, COL_VI, COL_VF, COL_DACQ, COL_QACQ, COL_CACQ, COL_STK, COL_MON = range(9)
+COL_INCL, COL_DENOM, COL_WALLET, COL_VI, COL_VF, COL_DACQ, COL_QACQ, COL_CACQ, COL_STK, COL_MON = range(10)
 
 
 class DichiarazioneDialog(QDialog):
     def __init__(self, summary: Dict, config: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Dichiarazione sostitutiva {summary.get('year', '')}")
-        self.resize(900, 620)
+        screen = QGuiApplication.primaryScreen()
+        disponibile = screen.availableGeometry() if screen else None
+        larghezza = min(1000, disponibile.width() - 80) if disponibile else 900
+        altezza = min(700, disponibile.height() - 80) if disponibile else 620
+        self.resize(larghezza, altezza)
+        if disponibile:
+            self.setMaximumSize(disponibile.width(), disponibile.height())
         self._summary = summary
         self._config = config
 
@@ -60,16 +67,29 @@ class DichiarazioneDialog(QDialog):
 
         # --- Tabella asset ---
         layout.addWidget(QLabel(
-            "Asset del Quadro RW (valori in EUR). Compila il wallet, spunta staking / "
-            "«solo monitoraggio» (bollo gia' versato), aggiungi righe per wallet non importati."
+            "Asset del Quadro RW (valori in EUR). Spunta «Includi» per le crypto da riportare "
+            "in dichiarazione, compila il wallet, staking / «solo monitoraggio» (bollo gia' "
+            "versato), aggiungi righe per wallet non importati."
         ))
         self._assets, self._vendite = dati_da_summary(summary)
-        self.tabella = QTableWidget(len(self._assets), 9, self)
+        self.tabella = QTableWidget(len(self._assets), 10, self)
         self.tabella.setHorizontalHeaderLabels([
-            "Denominazione", "Wallet", "Val. 1/1", "Val. 31/12",
+            "Includi", "Denominazione", "Wallet", "Val. 1/1", "Val. 31/12",
             "Data acq.", "Qta acq.", "Costo acq.", "Staking", "Solo monit.",
         ])
-        self.tabella.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.tabella.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(COL_DENOM, QHeaderView.ResizeMode.Stretch)
+        self.tabella.setColumnWidth(COL_INCL, 55)
+        self.tabella.setColumnWidth(COL_WALLET, 110)
+        self.tabella.setColumnWidth(COL_VI, 85)
+        self.tabella.setColumnWidth(COL_VF, 85)
+        self.tabella.setColumnWidth(COL_DACQ, 85)
+        self.tabella.setColumnWidth(COL_QACQ, 75)
+        self.tabella.setColumnWidth(COL_CACQ, 85)
+        self.tabella.setColumnWidth(COL_STK, 60)
+        self.tabella.setColumnWidth(COL_MON, 90)
+        self.tabella.horizontalHeader().setStretchLastSection(False)
         for riga, a in enumerate(self._assets):
             self._scrivi_riga(riga, a)
         layout.addWidget(self.tabella)
@@ -81,6 +101,12 @@ class DichiarazioneDialog(QDialog):
         btn_del = QPushButton("- Rimuovi selezionata")
         btn_del.clicked.connect(self._rimuovi_riga)
         riga_btn.addWidget(btn_del)
+        btn_tutti = QPushButton("Seleziona tutti")
+        btn_tutti.clicked.connect(lambda: self._imposta_inclusione(True))
+        riga_btn.addWidget(btn_tutti)
+        btn_nessuno = QPushButton("Deseleziona tutti")
+        btn_nessuno.clicked.connect(lambda: self._imposta_inclusione(False))
+        riga_btn.addWidget(btn_nessuno)
         riga_btn.addStretch()
         layout.addLayout(riga_btn)
 
@@ -109,10 +135,19 @@ class DichiarazioneDialog(QDialog):
         if r >= 0:
             self.tabella.removeRow(r)
 
+    def _imposta_inclusione(self, incluso: bool):
+        for r in range(self.tabella.rowCount()):
+            chk = self.tabella.cellWidget(r, COL_INCL)
+            if chk is not None:
+                chk.setChecked(incluso)
+
     def _scrivi_riga(self, riga: int, a: AssetRW):
         def cella(col, testo):
             self.tabella.setItem(riga, col, QTableWidgetItem(str(testo)))
 
+        chk_incl = QCheckBox()
+        chk_incl.setChecked(True)
+        self.tabella.setCellWidget(riga, COL_INCL, chk_incl)
         cella(COL_DENOM, a.denominazione)
         cella(COL_WALLET, a.wallet)
         cella(COL_VI, f"{a.valore_iniziale:.2f}" if a.valore_iniziale else "")
@@ -139,6 +174,9 @@ class DichiarazioneDialog(QDialog):
             denom_item = self.tabella.item(r, COL_DENOM)
             denom = denom_item.text().strip() if denom_item else ""
             if not denom:
+                continue
+            chk_incl = self.tabella.cellWidget(r, COL_INCL)
+            if chk_incl is not None and not chk_incl.isChecked():
                 continue
             dacq = (self.tabella.item(r, COL_DACQ).text().strip()
                     if self.tabella.item(r, COL_DACQ) else "")
@@ -180,8 +218,12 @@ class DichiarazioneDialog(QDialog):
         remember_save_dir(self._config, path)
         save_config(self._config)
 
+        assets = self._leggi_assets()
+        denominazioni_incluse = {a.denominazione for a in assets}
+        vendite = [v for v in self._vendite if v.denominazione in denominazioni_incluse]
+
         ok = genera_dichiarazione_docx(
-            Anagrafica(**dati), self._leggi_assets(), self._vendite, anno, path
+            Anagrafica(**dati), assets, vendite, anno, path
         )
         if ok:
             QMessageBox.information(self, "Dichiarazione", "Documento generato.\n"
