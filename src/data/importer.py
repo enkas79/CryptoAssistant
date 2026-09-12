@@ -37,6 +37,10 @@ class CSVImporter:
     NEXO_SIGNATURE = {
         'Transaction', 'Type', 'Input Currency', 'Output Currency', 'USD Equivalent'
     }
+    YOUHODLER_SIGNATURE = {
+        'transaction_id', 'account_id', 'status', 'type', 'ticker',
+        'amount_usd', 'amount_eur', 'created_at'
+    }
 
     @classmethod
     def detect_column(cls, columns: List[str], keywords: List[str]) -> Optional[str]:
@@ -238,6 +242,93 @@ class CSVImporter:
 
         return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
 
+    # Type esclusi dall'import: non spostano davvero un possesso tassabile
+    # (depositi/prelievi verso/da altri wallet gia' censiti altrove, burn,
+    # transazioni fallite).
+    YOUHODLER_EXCLUDED_TYPES = {'DEPOSIT', 'WITHDRAWAL', 'BURNT'}
+
+    @classmethod
+    def _parse_youhodler(cls, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Parser dedicato per l'export CSV di YouHodler.
+
+        - 'status' != SUCCESS: transazione mai andata a buon fine, scartata.
+        - EXCHANGE (conversion_ticker/conversion_amount valorizzati): genera
+          due righe (sell + buy) come per Crypto.com/Nexo, controvalore da
+          'amount_usd'.
+        - MINER_CLAIM_BLOCK / SAVING_EARN / REWARD_EARN: ricompense
+          accreditate a costo di carico zero (Price=0): l'intera plusvalenza
+          viene tassata alla vendita, senza doppia tassazione come reddito.
+        - HOLD / UNHOLD: blocco/sblocco di fondi (staking lock), trattati
+          come sell/buy della stessa quantita' al controvalore del momento:
+          si compensano quando la posizione si sblocca.
+        - DEPOSIT / WITHDRAWAL / BURNT: esclusi (vedi YOUHODLER_EXCLUDED_TYPES).
+        """
+        rows = []
+        for _, row in df.iterrows():
+            if str(row.get('status', '')).strip().upper() != 'SUCCESS':
+                continue
+
+            tx_type = str(row.get('type', '')).strip().upper()
+            if tx_type in cls.YOUHODLER_EXCLUDED_TYPES:
+                continue
+
+            amount = pd.to_numeric(row.get('amount'), errors='coerce')
+            if pd.isna(amount) or amount == 0:
+                continue
+
+            ticker = str(row.get('ticker', '')).strip().upper()
+            amount_usd = cls._parse_money(row.get('amount_usd'))
+            fee = cls._parse_money(row.get('fee'))
+            date = row.get('created_at')
+            notes = tx_type
+
+            conversion_ticker = row.get('conversion_ticker')
+            conversion_amount = pd.to_numeric(row.get('conversion_amount'), errors='coerce')
+            is_exchange = (
+                tx_type == 'EXCHANGE' and pd.notna(conversion_ticker)
+                and str(conversion_ticker).strip() != '' and not pd.isna(conversion_amount)
+                and conversion_amount != 0
+            )
+
+            if is_exchange:
+                qty_sell = abs(amount)
+                price_sell = (amount_usd / qty_sell) if qty_sell else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': ticker, 'Type': 'sell',
+                    'Amount': qty_sell, 'Price': price_sell, 'Fee': fee,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+                qty_buy = abs(conversion_amount)
+                price_buy = (amount_usd / qty_buy) if qty_buy else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': str(conversion_ticker).strip().upper(),
+                    'Type': 'buy', 'Amount': qty_buy, 'Price': price_buy, 'Fee': 0.0,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+                continue
+
+            if tx_type in ('MINER_CLAIM_BLOCK', 'SAVING_EARN', 'REWARD_EARN'):
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': ticker, 'Type': 'buy',
+                    'Amount': abs(amount), 'Price': 0.0, 'Fee': fee,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+                continue
+
+            if tx_type in ('HOLD', 'UNHOLD'):
+                qty = abs(amount)
+                price = (amount_usd / qty) if qty else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': ticker,
+                    'Type': 'sell' if tx_type == 'HOLD' else 'buy',
+                    'Amount': qty, 'Price': price, 'Fee': fee,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+                continue
+
+        return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
+
     @classmethod
     def _parse_generic(cls, df: pd.DataFrame, file_path: str) -> Optional[pd.DataFrame]:
         """Euristica generica basata su keyword, usata come fallback."""
@@ -338,6 +429,8 @@ class CSVImporter:
                     parsed = cls._parse_crypto_com(df)
                 elif cls.NEXO_SIGNATURE.issubset(columns_set):
                     parsed = cls._parse_nexo(df)
+                elif cls.YOUHODLER_SIGNATURE.issubset(columns_set):
+                    parsed = cls._parse_youhodler(df)
                 else:
                     parsed = cls._parse_generic(df, file_path)
 
