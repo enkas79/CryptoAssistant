@@ -1086,14 +1086,20 @@ class TradingTerminalWindow(QMainWindow):
 
         df_lavoro = self.df_master.copy()
         df_lavoro['Date (UTC+1:00)'] = parse_dates_safe(df_lavoro['Date (UTC+1:00)'])
-        df_lavoro = df_lavoro.dropna(subset=['Date (UTC+1:00)'])
-        
+
         if self.check_usa_filtro.isChecked():
+            # Il filtro per intervallo di date richiede una data valida: qui
+            # (e solo qui) le righe senza data vanno escluse, altrimenti non
+            # sapremmo se rientrano nell'intervallo scelto.
+            df_con_data = df_lavoro.dropna(subset=['Date (UTC+1:00)'])
             d_inizio = self.date_inizio.date().toPyDate()
             d_fine = self.date_fine.date().toPyDate()
-            mask = (df_lavoro['Date (UTC+1:00)'].dt.date >= d_inizio) & (df_lavoro['Date (UTC+1:00)'].dt.date <= d_fine)
-            df_filtrato = df_lavoro.loc[mask]
+            mask = (df_con_data['Date (UTC+1:00)'].dt.date >= d_inizio) & (df_con_data['Date (UTC+1:00)'].dt.date <= d_fine)
+            df_filtrato = df_con_data.loc[mask]
         else:
+            # Senza filtro data attivo, le transazioni con data mancante
+            # restano incluse: scartarle sbilancia quantita'/PMC (le vendite
+            # senza data sparirebbero, gonfiando il posseduto apparente).
             df_filtrato = df_lavoro
 
         # --- MODALITÀ GENERALE (GRAFICO) ---
