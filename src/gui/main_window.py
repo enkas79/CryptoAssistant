@@ -985,7 +985,7 @@ class TradingTerminalWindow(QMainWindow):
         if risposta != QMessageBox.StandardButton.Yes:
             return
 
-        self.database.clear_all()
+        cancellato_su_disco = self.database.clear_all()
         self.df_master = None
         self.prezzi_live = {}
         self.tabella.setRowCount(0)
@@ -1001,6 +1001,16 @@ class TradingTerminalWindow(QMainWindow):
         self.canvas.draw()
 
         self.aggiorna_menu_token()
+
+        if not cancellato_su_disco:
+            QMessageBox.warning(
+                self, "Reset Database",
+                "⚠️ La vista è stata svuotata, ma non sono riuscito a cancellare il file "
+                "dati su disco (potrebbe essere in uso da un altro programma, es. antivirus "
+                "o sincronizzazione cloud). Se non lo risolvi, al prossimo avvio dell'app le "
+                "vecchie transazioni potrebbero ricomparire sommandosi a quelle reimportate ora."
+            )
+            return
         QMessageBox.information(self, "Reset Database", "✅ Database svuotato. Puoi importare nuovi file CSV.")
 
     def aggiorna_menu_token(self):
