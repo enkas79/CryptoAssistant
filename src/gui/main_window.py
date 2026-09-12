@@ -285,7 +285,8 @@ class TradingTerminalWindow(QMainWindow):
         layout_tabella.addLayout(toolbar_tabella)
         layout_tabella.addWidget(self.tabella)
 
-        self.stack_visualizzazione.addWidget(tabella_container)
+        self.tabella_container = tabella_container
+        self.stack_visualizzazione.addWidget(self.tabella_container)
 
         # 2. Vista Grafico
         self.chart_view = QFrame()
@@ -1234,7 +1235,7 @@ class TradingTerminalWindow(QMainWindow):
 
         # --- MODALITÀ SINGOLA MONETA ---
         else:
-            self.stack_visualizzazione.setCurrentWidget(self.tabella)
+            self.stack_visualizzazione.setCurrentWidget(self.tabella_container)
             self.group_strat.setVisible(True)
             df_t = df_filtrato[df_filtrato['Token'] == selection]
 
