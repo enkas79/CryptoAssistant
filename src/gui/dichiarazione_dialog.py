@@ -13,7 +13,7 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QDialogButtonBox, QHeaderView, QHBoxLayout, QGroupBox, QCheckBox,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QScrollArea, QWidget
 )
 
 from utils.dichiarazione import (
@@ -47,10 +47,20 @@ class DichiarazioneDialog(QDialog):
         self.resize(larghezza, altezza)
         if disponibile:
             self.setMaximumSize(disponibile.width(), disponibile.height())
+            # Centra la finestra nello schermo disponibile cosi' resta sempre interamente visibile.
+            self.move(disponibile.x() + (disponibile.width() - larghezza) // 2,
+                      disponibile.y() + (disponibile.height() - altezza) // 2)
         self._summary = summary
         self._config = config
 
         layout = QVBoxLayout(self)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        contenuto = QWidget(scroll)
+        scroll.setWidget(contenuto)
+        layout.addWidget(scroll)
+        clayout = QVBoxLayout(contenuto)
 
         # --- Anagrafica ---
         gb = QGroupBox("Dati del dichiarante")
@@ -63,10 +73,10 @@ class DichiarazioneDialog(QDialog):
                 le.setText("Caf Veneto Srl - CAAF CGIL NORDEST")
             self._campi[chiave] = le
             form.addRow(etichetta + ":", le)
-        layout.addWidget(gb)
+        clayout.addWidget(gb)
 
         # --- Tabella asset ---
-        layout.addWidget(QLabel(
+        clayout.addWidget(QLabel(
             "Asset del Quadro RW (valori in EUR). Spunta «Includi» per le crypto da riportare "
             "in dichiarazione, compila il wallet, staking / «solo monitoraggio» (bollo gia' "
             "versato), aggiungi righe per wallet non importati."
@@ -90,9 +100,11 @@ class DichiarazioneDialog(QDialog):
         self.tabella.setColumnWidth(COL_STK, 60)
         self.tabella.setColumnWidth(COL_MON, 90)
         self.tabella.horizontalHeader().setStretchLastSection(False)
+        self.tabella.setMinimumHeight(220)
+        self.tabella.setMaximumHeight(360)
         for riga, a in enumerate(self._assets):
             self._scrivi_riga(riga, a)
-        layout.addWidget(self.tabella)
+        clayout.addWidget(self.tabella)
 
         riga_btn = QHBoxLayout()
         btn_add = QPushButton("+ Aggiungi asset")
@@ -108,16 +120,19 @@ class DichiarazioneDialog(QDialog):
         btn_nessuno.clicked.connect(lambda: self._imposta_inclusione(False))
         riga_btn.addWidget(btn_nessuno)
         riga_btn.addStretch()
-        layout.addLayout(riga_btn)
+        clayout.addLayout(riga_btn)
 
         if self._vendite:
             righe = "; ".join(
                 f"{v.denominazione}: {len(v.vendite)} vendite, plusv. "
                 f"{sum(g for _, g in v.plusvalenze):,.2f} EUR" for v in self._vendite
             )
-            layout.addWidget(QLabel(f"Vendite/plusvalenze (dal calcolo, metodo "
-                                    f"{summary.get('cost_basis_method', '')}): {righe}"))
+            label_vendite = QLabel(f"Vendite/plusvalenze (dal calcolo, metodo "
+                                    f"{summary.get('cost_basis_method', '')}): {righe}")
+            label_vendite.setWordWrap(True)
+            clayout.addWidget(label_vendite)
 
+        # Pulsanti fissi fuori dallo scroll, sempre visibili anche a finestra piccola.
         buttons = QDialogButtonBox()
         b_gen = buttons.addButton("Genera .docx", QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
