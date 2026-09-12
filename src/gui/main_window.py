@@ -266,11 +266,26 @@ class TradingTerminalWindow(QMainWindow):
         self.tabella.verticalHeader().setVisible(False)
         
         header_tab = self.tabella.horizontalHeader()
-        for i in range(5): 
+        for i in range(5):
             header_tab.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         header_tab.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
 
-        self.stack_visualizzazione.addWidget(self.tabella)
+        self._tabella_indici = []  # indice originale nel database per ogni riga mostrata
+
+        tabella_container = QWidget()
+        layout_tabella = QVBoxLayout(tabella_container)
+        layout_tabella.setContentsMargins(0, 0, 0, 0)
+
+        toolbar_tabella = QHBoxLayout()
+        toolbar_tabella.addStretch()
+        btn_elimina_riga = QPushButton("🗑️ Elimina righe selezionate")
+        btn_elimina_riga.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold; padding: 6px 12px;")
+        btn_elimina_riga.clicked.connect(self.elimina_transazioni_selezionate)
+        toolbar_tabella.addWidget(btn_elimina_riga)
+        layout_tabella.addLayout(toolbar_tabella)
+        layout_tabella.addWidget(self.tabella)
+
+        self.stack_visualizzazione.addWidget(tabella_container)
 
         # 2. Vista Grafico
         self.chart_view = QFrame()
@@ -1224,6 +1239,7 @@ class TradingTerminalWindow(QMainWindow):
             df_t = df_filtrato[df_filtrato['Token'] == selection]
 
             self.tabella.setRowCount(0)
+            self._tabella_indici = list(df_t.index)
 
             for _, row in df_t.iterrows():
                 r = self.tabella.rowCount()
@@ -1533,6 +1549,37 @@ class TradingTerminalWindow(QMainWindow):
         else:
             self.label_titolo_perf.setText("PERFORMANCE (N/A)")
             self.group_perf.setStyleSheet("")
+
+    def elimina_transazioni_selezionate(self):
+        """Elimina dal database le righe selezionate nella tabella (fix errori CSV)."""
+        righe_selezionate = sorted({idx.row() for idx in self.tabella.selectedIndexes()})
+        if not righe_selezionate:
+            QMessageBox.information(self, "Nessuna selezione", "Seleziona prima una o più righe da eliminare.")
+            return
+
+        indici_db = [self._tabella_indici[r] for r in righe_selezionate if r < len(self._tabella_indici)]
+        if not indici_db:
+            return
+
+        risposta = QMessageBox.question(
+            self, "Conferma eliminazione",
+            f"Eliminare definitivamente {len(indici_db)} transazione/i selezionata/e?\n"
+            "L'operazione non può essere annullata.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if risposta != QMessageBox.StandardButton.Yes:
+            return
+
+        rimosse = self.database.delete_transactions(indici_db)
+        if rimosse:
+            self.database.save()
+            self.df_master = self.database.get_dataframe()
+            self.aggiorna_menu_token()
+            self.aggiorna_vista()
+            QMessageBox.information(self, "Fatto", f"{rimosse} transazione/i eliminata/e.")
+        else:
+            QMessageBox.warning(self, "Errore", "Non è stato possibile eliminare le righe selezionate.")
 
     def calcola_target(self):
         """Calculate the quantity to buy to reach a target PMC."""

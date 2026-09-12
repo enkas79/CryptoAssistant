@@ -150,6 +150,24 @@ class TransactionDatabase:
                 return False
         return True
     
+    def delete_transactions(self, indices: list) -> int:
+        """
+        Rimuove le transazioni indicate (per errori nel CSV importato).
+
+        Args:
+            indices (list): Indici del DataFrame interno da rimuovere.
+
+        Returns:
+            int: Numero di righe effettivamente rimosse.
+        """
+        if self.df is None or self.df.empty:
+            return 0
+        indici_validi = self.df.index.intersection(indices)
+        if len(indici_validi) == 0:
+            return 0
+        self.df = self.df.drop(index=indici_validi)
+        return len(indici_validi)
+
     def get_tokens(self) -> list:
         """Get list of unique tokens in the database."""
         if self.df is not None and not self.df.empty:
