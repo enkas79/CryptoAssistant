@@ -256,9 +256,11 @@ class CSVImporter:
         return pd.DataFrame(rows, columns=cls.FINAL_COLUMNS)
 
     # Type esclusi dall'import: non spostano davvero un possesso tassabile
-    # (depositi/prelievi verso/da altri wallet gia' censiti altrove, burn,
-    # transazioni fallite).
-    YOUHODLER_EXCLUDED_TYPES = {'DEPOSIT', 'WITHDRAWAL', 'BURNT'}
+    # (burn, transazioni fallite). DEPOSIT/WITHDRAWAL NON sono esclusi: vanno
+    # trattati come buy/sell (vedi sotto) altrimenti un deposito seguito da
+    # uno scambio/prelievo genera una "perdita fantasma" di quantita', perche'
+    # l'uscita verrebbe contata senza la relativa entrata.
+    YOUHODLER_EXCLUDED_TYPES = {'BURNT'}
 
     @classmethod
     def _parse_youhodler(cls, df: pd.DataFrame) -> pd.DataFrame:
@@ -275,7 +277,10 @@ class CSVImporter:
         - HOLD / UNHOLD: blocco/sblocco di fondi (staking lock), trattati
           come sell/buy della stessa quantita' al controvalore del momento:
           si compensano quando la posizione si sblocca.
-        - DEPOSIT / WITHDRAWAL / BURNT: esclusi (vedi YOUHODLER_EXCLUDED_TYPES).
+        - DEPOSIT / WITHDRAWAL: trattati come buy/sell al controvalore reale
+          (come 'Top up Crypto'/'Withdrawal' di Nexo), cosi' un deposito e il
+          successivo prelievo/scambio si compensano correttamente.
+        - BURNT: esclusa (vedi YOUHODLER_EXCLUDED_TYPES).
         """
         rows = []
         for _, row in df.iterrows():
@@ -335,6 +340,17 @@ class CSVImporter:
                 rows.append({
                     'Date (UTC+1:00)': date, 'Token': ticker,
                     'Type': 'sell' if tx_type == 'HOLD' else 'buy',
+                    'Amount': qty, 'Price': price, 'Fee': fee,
+                    'Notes': notes, 'Original Currency': 'USD'
+                })
+                continue
+
+            if tx_type in ('DEPOSIT', 'WITHDRAWAL'):
+                qty = abs(amount)
+                price = (amount_usd / qty) if qty else 0.0
+                rows.append({
+                    'Date (UTC+1:00)': date, 'Token': ticker,
+                    'Type': 'buy' if tx_type == 'DEPOSIT' else 'sell',
                     'Amount': qty, 'Price': price, 'Fee': fee,
                     'Notes': notes, 'Original Currency': 'USD'
                 })
