@@ -1536,20 +1536,42 @@ class TradingTerminalWindow(QMainWindow):
 
     def calcola_target(self):
         """Calculate the quantity to buy to reach a target PMC."""
+        testo_target = self.input_target.text().strip().replace(',', '.')
+        if not testo_target:
+            self.label_ris.setText("\u26a0\ufe0f Inserisci un target PMC.")
+            return
+
         try:
-            target = float(self.input_target.text().replace(',', '.'))
+            target = float(testo_target)
+        except ValueError:
+            self.label_ris.setText("\u26a0\ufe0f Target PMC non valido.")
+            return
+
+        if target <= 0:
+            self.label_ris.setText("\u26a0\ufe0f Il target PMC deve essere maggiore di zero.")
+            return
+
+        q_c, p_c = self.dati_correnti['qta'], self.dati_correnti['pmc']
+        if not q_c:
+            self.label_ris.setText("\u26a0\ufe0f Nessuna posizione aperta per questo token.")
+            return
+
+        mkt = self.prezzi_live.get(self.combo_token.currentText(), 0) * (
+            self.tasso_cambio_live if self.valuta == "EUR" else 1.0
+        )
+        if not mkt:
+            self.label_ris.setText("\u26a0\ufe0f Prezzo di mercato non disponibile.")
+            return
+
+        try:
             simb = "\u20ac" if self.valuta == "EUR" else "$"
-            mkt = self.prezzi_live.get(self.combo_token.currentText(), 0) * (
-                self.tasso_cambio_live if self.valuta == "EUR" else 1.0
-            )
-            q_c, p_c = self.dati_correnti['qta'], self.dati_correnti['pmc']
-            
+
             if mkt == target:
                 self.label_ris.setText("Il prezzo \u00e8 gi\u00e0 al target.")
                 return
-            
+
             q_n, spesa = calculate_target_quantity(q_c, p_c, target, mkt)
-            
+
             if q_n > 0:
                 self.label_ris.setText(f"\ud83c\udfaf Acquista <b>{q_n:,.4f}</b> unit\u00e0.<br>Spesa: <b>{spesa:,.2f} {simb}</b>")
             else:
