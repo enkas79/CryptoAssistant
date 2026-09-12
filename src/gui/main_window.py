@@ -1356,20 +1356,11 @@ class TradingTerminalWindow(QMainWindow):
 
     def _mostra_riepilogo_asset(self, token: str):
         """Mostra una finestra con il riepilogo delle performance di un
-        singolo asset, con la possibilità di stamparlo/esportarlo in PDF."""
-        simb = "€" if self.valuta == "EUR" else "$"
-        stats = calculate_token_stats(
-            self.df_master, token, self.prezzi_live.get(token, 0),
-            self.tasso_cambio_live, self.valuta, rate_for_date=self.get_historical_rate
-        )
-        perc, diff = calculate_performance(stats['invested'], stats['current_value'])
-        colore = "#28a745" if perc >= 0 else "#dc3545"
-
-        cmc = calculate_cmc_style_stats(
-            self.df_master[self.df_master['Token'] == token],
-            self.prezzi_live.get(token, 0), self.tasso_cambio_live, self.valuta,
-            rate_for_date=self.get_historical_rate,
-        )
+        singolo asset, con selezione del periodo (tutto o un anno) e la
+        possibilità di stamparlo/esportarlo in PDF."""
+        df_token_tutto = self.df_master[self.df_master['Token'] == token].copy()
+        df_token_tutto['Date (UTC+1:00)'] = parse_dates_safe(df_token_tutto['Date (UTC+1:00)'])
+        anni = sorted(df_token_tutto['Date (UTC+1:00)'].dropna().dt.year.unique().tolist(), reverse=True)
 
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Riepilogo {token}")
@@ -1380,37 +1371,81 @@ class TradingTerminalWindow(QMainWindow):
         titolo.setStyleSheet("font-size: 20px; font-weight: bold;")
         layout.addWidget(titolo)
 
+        riga_periodo = QHBoxLayout()
+        riga_periodo.addWidget(QLabel("Periodo:"))
+        combo_periodo = QComboBox()
+        combo_periodo.addItem("Tutto il periodo", None)
+        for anno in anni:
+            combo_periodo.addItem(str(anno), int(anno))
+        riga_periodo.addWidget(combo_periodo)
+        riga_periodo.addStretch()
+        layout.addLayout(riga_periodo)
+
         griglia = QGridLayout()
-        righe = [
-            ("Quantità posseduta:", f"{stats['quantity']:,.6f} {token}"),
-            ("PMC (prezzo medio):", f"{stats['pmc']:,.4f} {simb}"),
-            ("Investito:", f"{stats['invested']:,.2f} {simb}"),
-            ("Valore attuale:", f"{stats['current_value']:,.2f} {simb}"),
-        ]
-        for r, (etichetta, valore) in enumerate(righe):
-            griglia.addWidget(QLabel(etichetta), r, 0)
-            lbl_valore = QLabel(valore)
-            lbl_valore.setStyleSheet("font-weight: bold;")
-            griglia.addWidget(lbl_valore, r, 1)
         layout.addLayout(griglia)
-
-        lbl_perf = QLabel(f"Performance (non realizzato): {perc:+.2f}% ({diff:+,.2f} {simb})")
-        lbl_perf.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {colore}; margin-top: 10px;")
+        lbl_perf = QLabel()
+        lbl_perf.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 10px;")
         layout.addWidget(lbl_perf)
-
-        col_cmc = "#28a745" if cmc['total_pl'] >= 0 else "#dc3545"
-        lbl_cmc = QLabel(
-            f"P/L stile CoinMarketCap: {cmc['total_pl']:+,.2f} {simb} ({cmc['total_pl_pct']:+.2f}%)\n"
-            f"realizzato {cmc['realized_pl']:+,.2f} · non realizzato {cmc['unrealized_pl']:+,.2f} · "
-            f"costo base {cmc['cost_basis']:,.2f} {simb}"
-        )
+        lbl_cmc = QLabel()
         lbl_cmc.setWordWrap(True)
-        lbl_cmc.setStyleSheet(f"font-size: 12px; color: {col_cmc};")
+        lbl_cmc.setStyleSheet("font-size: 12px;")
         layout.addWidget(lbl_cmc)
+
+        def aggiorna(_index=0):
+            anno_scelto = combo_periodo.currentData()
+            if anno_scelto is None:
+                df_periodo = df_token_tutto
+            else:
+                df_periodo = df_token_tutto[df_token_tutto['Date (UTC+1:00)'].dt.year == anno_scelto]
+
+            simb = "€" if self.valuta == "EUR" else "$"
+            stats = calculate_token_stats(
+                df_periodo, token, self.prezzi_live.get(token, 0),
+                self.tasso_cambio_live, self.valuta, rate_for_date=self.get_historical_rate
+            )
+            perc, diff = calculate_performance(stats['invested'], stats['current_value'])
+            colore = "#28a745" if perc >= 0 else "#dc3545"
+            cmc = calculate_cmc_style_stats(
+                df_periodo, self.prezzi_live.get(token, 0), self.tasso_cambio_live,
+                self.valuta, rate_for_date=self.get_historical_rate,
+            )
+
+            while griglia.count():
+                item = griglia.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            righe = [
+                ("Quantità posseduta:", f"{stats['quantity']:,.6f} {token}"),
+                ("PMC (prezzo medio):", f"{stats['pmc']:,.4f} {simb}"),
+                ("Investito:", f"{stats['invested']:,.2f} {simb}"),
+                ("Valore attuale:", f"{stats['current_value']:,.2f} {simb}"),
+            ]
+            for r, (etichetta, valore) in enumerate(righe):
+                griglia.addWidget(QLabel(etichetta), r, 0)
+                lbl_valore = QLabel(valore)
+                lbl_valore.setStyleSheet("font-weight: bold;")
+                griglia.addWidget(lbl_valore, r, 1)
+
+            lbl_perf.setText(f"Performance (non realizzato): {perc:+.2f}% ({diff:+,.2f} {simb})")
+            lbl_perf.setStyleSheet(
+                f"font-size: 16px; font-weight: bold; color: {colore}; margin-top: 10px;"
+            )
+            col_cmc = "#28a745" if cmc['total_pl'] >= 0 else "#dc3545"
+            lbl_cmc.setText(
+                f"P/L stile CoinMarketCap: {cmc['total_pl']:+,.2f} {simb} ({cmc['total_pl_pct']:+.2f}%)\n"
+                f"realizzato {cmc['realized_pl']:+,.2f} · non realizzato {cmc['unrealized_pl']:+,.2f} · "
+                f"costo base {cmc['cost_basis']:,.2f} {simb}"
+            )
+            lbl_cmc.setStyleSheet(f"font-size: 12px; color: {col_cmc};")
+
+        combo_periodo.currentIndexChanged.connect(aggiorna)
+        aggiorna()
 
         pulsanti = QHBoxLayout()
         btn_stampa = QPushButton("🖨 Stampa / Esporta PDF")
-        btn_stampa.clicked.connect(lambda: self._stampa_riepilogo_asset(token))
+        btn_stampa.clicked.connect(
+            lambda: self._stampa_riepilogo_asset(token, combo_periodo.currentData())
+        )
         btn_chiudi = QPushButton("Chiudi")
         btn_chiudi.clicked.connect(dialog.accept)
         pulsanti.addWidget(btn_stampa)
@@ -1419,18 +1454,23 @@ class TradingTerminalWindow(QMainWindow):
 
         dialog.exec()
 
-    def _stampa_riepilogo_asset(self, token: str):
-        """Genera un PDF con il solo estratto conto dell'asset selezionato."""
+    def _stampa_riepilogo_asset(self, token: str, anno: Optional[int] = None):
+        """Genera un PDF con il solo estratto conto dell'asset selezionato,
+        per l'anno indicato o per tutto il periodo se anno e' None."""
+        suffisso = f"_{anno}" if anno else ""
         path, _ = QFileDialog.getSaveFileName(
             self, "Salva Riepilogo",
-            self._percorso_salvataggio(f"Riepilogo_{token}.pdf"), "PDF (*.pdf)"
+            self._percorso_salvataggio(f"Riepilogo_{token}{suffisso}.pdf"), "PDF (*.pdf)"
         )
         if not path:
             return
         path = ensure_ext(path, 'pdf')
         self._ricorda_cartella(path)
 
-        df_token = self.df_master[self.df_master['Token'] == token]
+        df_token = self.df_master[self.df_master['Token'] == token].copy()
+        if anno:
+            df_token['Date (UTC+1:00)'] = parse_dates_safe(df_token['Date (UTC+1:00)'])
+            df_token = df_token[df_token['Date (UTC+1:00)'].dt.year == anno]
         generator = FiscalReportGenerator(
             live_prices=self.prezzi_live,
             exchange_rate=self.tasso_cambio_live,
