@@ -14,7 +14,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QDialogButtonBox, QHeaderView
+    QTableWidgetItem, QDialogButtonBox, QHeaderView, QCheckBox, QWidget
 )
 
 
@@ -40,32 +40,37 @@ class _FetchThread(QThread):
 class QuadroRWDialog(QDialog):
     """Tabella editabile Token / Qtà e Prezzo 1-1 / Qtà e Prezzo 31-12."""
 
-    COL_TOKEN, COL_QTA_IN, COL_PREZZO_IN, COL_QTA_FIN, COL_PREZZO_FIN = range(5)
+    COL_INCLUDI, COL_TOKEN, COL_QTA_IN, COL_PREZZO_IN, COL_QTA_FIN, COL_PREZZO_FIN = range(6)
 
     def __init__(self, bounds: List[Tuple[str, float, float]], year: int,
-                 price_provider=None, prefill=None, parent=None):
+                 price_provider=None, prefill=None, token_esclusi=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Quadro RW {year} - Valorizzazione cripto-attività")
-        self.resize(640, 460)
+        self.resize(680, 460)
         self._year = year
         self._bounds = bounds
         self._provider = price_provider
         self._worker = None
+        self._checkbox_includi: Dict[str, QCheckBox] = {}
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             f"Quotazioni in EUR al 01/01/{year} e al 31/12/{year}. "
-            "Le celle in giallo non sono state trovate: inseriscile a mano."
+            "Le celle in giallo non sono state trovate: inseriscile a mano.\n"
+            "Deseleziona un token per escluderlo dalla dichiarazione del Quadro RW."
         ))
 
-        self.tabella = QTableWidget(len(bounds), 5, self)
+        esclusi = token_esclusi or set()
+
+        self.tabella = QTableWidget(len(bounds), 6, self)
         self.tabella.setHorizontalHeaderLabels(
-            ["Token", "Qtà 01/01", "Prezzo 01/01", "Qtà 31/12", "Prezzo 31/12"]
+            ["Includi", "Token", "Qtà 01/01", "Prezzo 01/01", "Qtà 31/12", "Prezzo 31/12"]
         )
         self.tabella.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
         pf_in, pf_fin = prefill if prefill else ({}, {})
         for riga, (token, qta_in, qta_fin) in enumerate(bounds):
+            self._set_checkbox_includi(riga, token, includi=token not in esclusi)
             self._set_readonly(riga, self.COL_TOKEN, token)
             self._set_readonly(riga, self.COL_QTA_IN, f"{qta_in:.8f}")
             self._set_readonly(riga, self.COL_QTA_FIN, f"{qta_fin:.8f}")
@@ -98,6 +103,17 @@ class QuadroRWDialog(QDialog):
         # altrimenti verrebbero sovrascritti); il pulsante resta disponibile.
         if self._provider is not None and not prefill:
             self._scarica_prezzi()
+
+    def _set_checkbox_includi(self, riga: int, token: str, includi: bool) -> None:
+        checkbox = QCheckBox()
+        checkbox.setChecked(includi)
+        contenitore = QWidget()
+        layout_cb = QHBoxLayout(contenitore)
+        layout_cb.addWidget(checkbox)
+        layout_cb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout_cb.setContentsMargins(0, 0, 0, 0)
+        self.tabella.setCellWidget(riga, self.COL_INCLUDI, contenitore)
+        self._checkbox_includi[token] = checkbox
 
     def _set_readonly(self, riga: int, col: int, testo: str) -> None:
         item = QTableWidgetItem(testo)
@@ -151,3 +167,10 @@ class QuadroRWDialog(QDialog):
             inizio[token] = self._num(self.tabella.item(riga, self.COL_PREZZO_IN))
             fine[token] = self._num(self.tabella.item(riga, self.COL_PREZZO_FIN))
         return inizio, fine
+
+    def token_esclusi(self) -> set:
+        """Token deselezionati: da non includere nel Quadro RW."""
+        return {
+            token for token, checkbox in self._checkbox_includi.items()
+            if not checkbox.isChecked()
+        }

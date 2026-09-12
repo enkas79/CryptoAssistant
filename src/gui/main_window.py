@@ -116,6 +116,8 @@ class TradingTerminalWindow(QMainWindow):
         # riusate dal report PDF e dalla dichiarazione: {anno: (prezzi_inizio, prezzi_fine)}.
         # Persistite in config per non doverle reinserire a ogni avvio.
         self._rw_prezzi: Dict[int, tuple] = self._carica_rw_prezzi()
+        # Token esclusi dalla dichiarazione Quadro RW, per anno: {anno: {token, ...}}.
+        self._rw_esclusi: Dict[int, set] = self._carica_rw_esclusi()
 
         # Initialize UI
         self.initUI()
@@ -708,7 +710,8 @@ class TradingTerminalWindow(QMainWindow):
                 prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
         try:
             summary = self.tax_calculator.get_tax_summary(
-                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine,
+                token_esclusi_rw=self._rw_esclusi.get(year),
             )
         except Exception as e:
             QMessageBox.critical(self, "Errore", f"Errore nel calcolo: {e}")
@@ -726,7 +729,8 @@ class TradingTerminalWindow(QMainWindow):
         try:
             prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
             tax_summary = self.tax_calculator.get_tax_summary(
-                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine,
+                token_esclusi_rw=self._rw_esclusi.get(year),
             )
 
             result_text = f"""
@@ -795,11 +799,14 @@ class TradingTerminalWindow(QMainWindow):
 
         dialog = QuadroRWDialog(
             bounds, year, price_provider=self._provider_prezzi_storici(),
-            prefill=self._rw_prezzi.get(year), parent=self,
+            prefill=self._rw_prezzi.get(year), token_esclusi=self._rw_esclusi.get(year),
+            parent=self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._rw_prezzi[year] = dialog.prezzi()
+            self._rw_esclusi[year] = dialog.token_esclusi()
             self._salva_rw_prezzi()
+            self._salva_rw_esclusi()
             self.calcola_tasse()
 
     def _carica_rw_prezzi(self) -> Dict[int, tuple]:
@@ -817,6 +824,23 @@ class TradingTerminalWindow(QMainWindow):
         self.config["rw_prezzi"] = {
             str(anno): {"start": s or {}, "end": e or {}}
             for anno, (s, e) in self._rw_prezzi.items()
+        }
+        save_config(self.config)
+
+    def _carica_rw_esclusi(self) -> Dict[int, set]:
+        """Rilegge da config i token esclusi dal Quadro RW: {anno: {token, ...}}."""
+        out: Dict[int, set] = {}
+        for anno, tokens in (self.config.get("rw_esclusi") or {}).items():
+            try:
+                out[int(anno)] = set(tokens or [])
+            except (ValueError, TypeError):
+                continue
+        return out
+
+    def _salva_rw_esclusi(self) -> None:
+        """Persiste in config i token esclusi dal Quadro RW."""
+        self.config["rw_esclusi"] = {
+            str(anno): sorted(tokens) for anno, tokens in self._rw_esclusi.items() if tokens
         }
         save_config(self.config)
 
@@ -948,7 +972,8 @@ class TradingTerminalWindow(QMainWindow):
                     prezzi_inizio, prezzi_fine = self._rw_prezzi.get(year, (None, None))
 
             tax_summary = self.tax_calculator.get_tax_summary(
-                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine
+                self.df_master, year, prices_start=prezzi_inizio, prices_end=prezzi_fine,
+                token_esclusi_rw=self._rw_esclusi.get(year),
             )
 
             generator = FiscalReportGenerator(

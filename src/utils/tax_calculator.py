@@ -481,6 +481,7 @@ class TaxCalculator:
         year: int,
         prices_start: Dict[str, float],
         prices_end: Dict[str, float],
+        token_esclusi: Optional[set] = None,
     ) -> List[QuadroRWRow]:
         """
         Costruisce le righe del Quadro RW per l'anno indicato.
@@ -490,9 +491,12 @@ class TaxCalculator:
             year: Anno d'imposta.
             prices_start: Quotazione EUR di ogni token al 1° gennaio dell'anno.
             prices_end: Quotazione EUR di ogni token al 31 dicembre dell'anno.
+            token_esclusi: Token da NON includere nel Quadro RW (es. asset che
+                l'utente non vuole dichiarare, gestiti a parte).
 
         Returns:
-            Una riga per ogni token detenuto (anche solo in parte dell'anno).
+            Una riga per ogni token detenuto (anche solo in parte dell'anno),
+            esclusi quelli in `token_esclusi`.
         """
         df = df.copy()
         df['Date (UTC+1:00)'] = pd.to_datetime(df['Date (UTC+1:00)'], errors='coerce')
@@ -503,8 +507,11 @@ class TaxCalculator:
         year_end = pd.Timestamp(year, 12, 31)
         days_in_year = (date(year, 12, 31) - date(year, 1, 1)).days + 1
 
+        esclusi = token_esclusi or set()
         rows: List[QuadroRWRow] = []
         for token in sorted(df['Token'].unique()):
+            if token in esclusi:
+                continue
             tdf = df[df['Token'] == token].sort_values('Date (UTC+1:00)').copy()
             tdf['_delta'] = tdf.apply(
                 lambda r: r['Amount'] if str(r['Type']).lower() == 'buy' else -r['Amount'],
@@ -623,6 +630,7 @@ class TaxCalculator:
         year: Optional[int] = None,
         prices_start: Optional[Dict[str, float]] = None,
         prices_end: Optional[Dict[str, float]] = None,
+        token_esclusi_rw: Optional[set] = None,
     ) -> Dict:
         """
         Get a summary of tax calculations for a given year.
@@ -634,6 +642,8 @@ class TaxCalculator:
                 dell'anno, per token. Se fornite (insieme a prices_end) il
                 riepilogo include il Quadro RW e l'imposta cripto-attività.
             prices_end (Optional[Dict[str, float]]): Quotazioni EUR al 31 dicembre.
+            token_esclusi_rw (Optional[set]): Token da non includere nel
+                Quadro RW (scelta dell'utente in fase di valorizzazione).
 
         Returns:
             Dict: Summary of tax calculations.
@@ -647,7 +657,7 @@ class TaxCalculator:
         quadro_rw: List[Dict] = []
         imposta_cripto_totale = 0.0
         if prices_start is not None and prices_end is not None:
-            righe = self.build_quadro_rw(df, year, prices_start, prices_end)
+            righe = self.build_quadro_rw(df, year, prices_start, prices_end, token_esclusi_rw)
             for r in righe:
                 quadro_rw.append({
                     "token": r.token,
