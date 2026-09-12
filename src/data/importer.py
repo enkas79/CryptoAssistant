@@ -66,6 +66,14 @@ class CSVImporter:
         except ValueError:
             return 0.0
 
+    # Keyword (case-insensitive, match su sottostringa) che nella 'Transaction
+    # Kind' di Crypto.com identificano una ricompensa/reddito accreditato
+    # (staking, interessi, cashback, referral, campagne) anziche' un vero
+    # trasferimento di fondi gia' posseduti (deposit, top up, transfer,
+    # withdrawal, dust conversion): per queste il costo di carico e' zero,
+    # l'intera plusvalenza si tassa alla vendita.
+    REWARD_KEYWORDS = ('reward', 'cashback', 'interest', 'bonus', 'rebate', 'dividend')
+
     @classmethod
     def _parse_crypto_com(cls, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -73,6 +81,9 @@ class CSVImporter:
         Gestisce i conversion/exchange (Currency -> To Currency) come due righe
         (sell + buy), tutti gli altri movimenti come singola riga in base al
         segno di 'Amount'. Il valore in USD arriva da 'Native Amount (in USD)'.
+        Le ricompense (REWARD_KEYWORDS nella 'Transaction Kind') entrano a
+        costo di carico zero; gli altri movimenti (deposit, transfer, dust
+        conversion, ecc.) mantengono il controvalore reale come costo base.
         """
         rows = []
         for _, row in df.iterrows():
@@ -90,6 +101,7 @@ class CSVImporter:
             description = str(row.get('Transaction Description', '') or '')
             kind = str(row.get('Transaction Kind', '') or '')
             notes = f"{description} ({kind})".strip()
+            is_reward = any(k in kind.lower() for k in cls.REWARD_KEYWORDS)
 
             has_second_leg = (
                 pd.notna(to_currency) and str(to_currency).strip() != ''
@@ -116,7 +128,7 @@ class CSVImporter:
             else:
                 qty = abs(amount)
                 tx_type = 'buy' if amount >= 0 else 'sell'
-                price = (native_usd / qty) if qty else 0.0
+                price = 0.0 if is_reward else ((native_usd / qty) if qty else 0.0)
                 rows.append({
                     'Date (UTC+1:00)': date, 'Token': currency, 'Type': tx_type,
                     'Amount': qty, 'Price': price, 'Fee': 0.0,
@@ -233,7 +245,8 @@ class CSVImporter:
                 token = in_token or out_token
                 qty = abs(in_amount)
                 tx_type = 'buy' if in_amount >= 0 else 'sell'
-                price = (usd_value / qty) if qty else 0.0
+                is_reward = any(k in tx_kind.lower() for k in cls.REWARD_KEYWORDS)
+                price = 0.0 if is_reward else ((usd_value / qty) if qty else 0.0)
                 rows.append({
                     'Date (UTC+1:00)': date, 'Token': token,
                     'Type': tx_type, 'Amount': qty, 'Price': price, 'Fee': fee,
